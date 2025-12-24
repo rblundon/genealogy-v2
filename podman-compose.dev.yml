@@ -1,10 +1,13 @@
 version: '3.8'
 
+# Development Environment for Ubuntu VM
+# Uses bind mounts for live code editing with hot reload
+
 services:
   # MariaDB Cache Database
   mariadb:
     image: docker.io/library/mariadb:10.11
-    container_name: genealogy-mariadb
+    container_name: genealogy-mariadb-dev
     restart: unless-stopped
     environment:
       MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
@@ -23,93 +26,24 @@ services:
       retries: 5
       start_period: 30s
     ports:
-      - "127.0.0.1:3306:3306"  # Only expose to localhost for debugging
+      - "127.0.0.1:3306:3306"  # Only expose to localhost
 
-  # Redis for Gramps Web Celery tasks
-  grampsweb_redis:
-    image: docker.io/library/redis:7.2-alpine
-    container_name: genealogy-grampsweb-redis
-    restart: unless-stopped
-    networks:
-      - genealogy-net
-
-  # Gramps Web
-  grampsweb:
-    image: ghcr.io/gramps-project/grampsweb:latest
-    container_name: genealogy-grampsweb
-    restart: unless-stopped
-    depends_on:
-      - grampsweb_redis
-    environment:
-      GRAMPSWEB_TREE: ${GRAMPSWEB_TREE:-Genealogy Research}
-      GRAMPSWEB_SECRET_KEY: ${GRAMPSWEB_SECRET_KEY:-your-secret-key-change-in-production}
-      GRAMPSWEB_CELERY_CONFIG__broker_url: redis://grampsweb_redis:6379/0
-      GRAMPSWEB_CELERY_CONFIG__result_backend: redis://grampsweb_redis:6379/0
-      GRAMPSWEB_RATELIMIT_STORAGE_URI: redis://grampsweb_redis:6379/1
-    volumes:
-      - grampsweb_users:/app/users
-      - grampsweb_index:/app/indexdir
-      - grampsweb_thumb_cache:/app/thumbnail_cache
-      - grampsweb_cache:/app/cache
-      - grampsweb_secret:/app/secret
-      - grampsweb_db:/root/.gramps/grampsdb
-      - grampsweb_media:/app/media
-      - grampsweb_tmp:/tmp
-    networks:
-      - genealogy-net
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/api/metadata/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-    ports:
-      - "5555:5000"
-
-  # Gramps Web Celery Worker
-  grampsweb_celery:
-    image: ghcr.io/gramps-project/grampsweb:latest
-    container_name: genealogy-grampsweb-celery
-    restart: unless-stopped
-    depends_on:
-      - grampsweb_redis
-    environment:
-      GRAMPSWEB_TREE: ${GRAMPSWEB_TREE:-Genealogy Research}
-      GRAMPSWEB_SECRET_KEY: ${GRAMPSWEB_SECRET_KEY:-your-secret-key-change-in-production}
-      GRAMPSWEB_CELERY_CONFIG__broker_url: redis://grampsweb_redis:6379/0
-      GRAMPSWEB_CELERY_CONFIG__result_backend: redis://grampsweb_redis:6379/0
-      GRAMPSWEB_RATELIMIT_STORAGE_URI: redis://grampsweb_redis:6379/1
-    volumes:
-      - grampsweb_users:/app/users
-      - grampsweb_index:/app/indexdir
-      - grampsweb_thumb_cache:/app/thumbnail_cache
-      - grampsweb_cache:/app/cache
-      - grampsweb_secret:/app/secret
-      - grampsweb_db:/root/.gramps/grampsdb
-      - grampsweb_media:/app/media
-      - grampsweb_tmp:/tmp
-    networks:
-      - genealogy-net
-    command: celery -A gramps_webapi.celery worker --loglevel=INFO --concurrency=2
-
-  # Backend API Server
+  # Backend API Server (Development Mode)
   backend:
     build:
       context: ./backend
-      dockerfile: Dockerfile
-    container_name: genealogy-backend
+      dockerfile: Dockerfile.dev
+    container_name: genealogy-backend-dev
     restart: unless-stopped
     depends_on:
       mariadb:
-        condition: service_healthy
-      grampsweb:
         condition: service_healthy
     environment:
       # OpenAI Configuration
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       
-      # Gramps Web Configuration
-      GRAMPS_WEB_URL: http://grampsweb:5000
+      # External Gramps Web Configuration
+      GRAMPS_WEB_URL: ${GRAMPS_WEB_URL}
       GRAMPS_API_TOKEN: ${GRAMPS_API_TOKEN}
       
       # MariaDB Configuration
@@ -120,76 +54,70 @@ services:
       MARIADB_DATABASE: ${MARIADB_DATABASE:-genealogy_cache}
       
       # Application Configuration
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      ENVIRONMENT: ${ENVIRONMENT:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
+      ENVIRONMENT: development
       
-      # Optional: Future LLM providers
-      # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      # OLLAMA_URL: ${OLLAMA_URL}
+      # Development Features
+      RELOAD: "true"  # Enable uvicorn auto-reload
     volumes:
-      - ./backend:/app:rw  # Mount code as read-write for development
-      - backend_logs:/app/logs  # Writable logs directory
+      # Bind mount source code for live editing
+      - ./backend:/app:rw
+      # Separate volume for logs (writable)
+      - backend_logs:/app/logs
     networks:
       - genealogy-net
     healthcheck:
-      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health', timeout=5)"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
     ports:
       - "8000:8000"
+    command: >
+      uvicorn main:app
+      --host 0.0.0.0
+      --port 8000
+      --reload
+      --log-level debug
 
-  # Frontend Web Application
+  # Frontend Web Application (Development Mode)
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile
-    container_name: genealogy-frontend
+      dockerfile: Dockerfile.dev
+    container_name: genealogy-frontend-dev
     restart: unless-stopped
     depends_on:
       backend:
         condition: service_healthy
     environment:
       VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
-      # For production, set to your actual backend URL
+      NODE_ENV: development
     volumes:
-      - ./frontend:/app:rw  # Mount code as read-write for development
-      - /app/node_modules  # Prevent overwriting node_modules
+      # Bind mount source code for live editing
+      - ./frontend:/app:rw
+      # Exclude node_modules from bind mount (performance)
+      - /app/node_modules
     networks:
       - genealogy-net
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000"]
+      test: ["CMD", "curl", "-f", "http://localhost:5173"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
     ports:
-      - "3000:3000"
+      - "5173:5173"  # Vite dev server port
+    command: npm run dev -- --host 0.0.0.0
 
 networks:
   genealogy-net:
     driver: bridge
-    name: genealogy-net
+    name: genealogy-net-dev
 
 volumes:
   mariadb_data:
-    name: genealogy-mariadb-data
-  grampsweb_users:
-    name: genealogy-grampsweb-users
-  grampsweb_index:
-    name: genealogy-grampsweb-index
-  grampsweb_thumb_cache:
-    name: genealogy-grampsweb-thumb-cache
-  grampsweb_cache:
-    name: genealogy-grampsweb-cache
-  grampsweb_secret:
-    name: genealogy-grampsweb-secret
-  grampsweb_db:
-    name: genealogy-grampsweb-db
-  grampsweb_media:
-    name: genealogy-grampsweb-media
-  grampsweb_tmp:
-    name: genealogy-grampsweb-tmp
+    name: genealogy-mariadb-data-dev
   backend_logs:
-    name: genealogy-backend-logs
+    name: genealogy-backend-logs-dev

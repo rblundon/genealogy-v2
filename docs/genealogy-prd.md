@@ -15,7 +15,140 @@ A containerized, web-based genealogy research tool that automates the extraction
 ### 1.3 Target User
 Individual genealogy researchers who want to accelerate their family history research through automated data extraction and relationship mapping.
 
-## 2. Technical Architecture
+## 2. Development Methodology
+
+### 2.1 BMAD with Spec Anchors Approach
+
+This project uses **BMAD (Best Matching Artifact Design)** as the primary development methodology, supplemented with **Spec Kit elements** for critical architectural components. This hybrid approach balances rapid iteration with necessary architectural rigor.
+
+#### 2.1.1 Rationale for BMAD
+
+**Why BMAD is Optimal:**
+- **AI Co-Pilot Development**: Rapid iteration with AI assistance benefits from artifact-first approach
+- **External Integration Discovery**: Gramps Web API, OpenAI LLM, and web scraping have unpredictable constraints best learned through building
+- **Phase 1 MVP Focus**: Clear prototype goals with measurable success criteria
+- **Complex Integration Points**: Multiple external systems require empirical testing
+- **LLM Experimentation**: Prompt engineering and accuracy tuning need iterative refinement
+
+**BMAD Workflow:**
+1. Build vertical slices (URL → extraction → storage)
+2. Test with real data immediately
+3. Discover constraints through working code
+4. Refine specifications based on artifacts
+5. Update PRD with learned constraints
+
+#### 2.1.2 Spec Anchors (Must Spec First)
+
+Certain components are **too critical for trial-and-error** and require specifications before implementation:
+
+**1. SSOT Validation Logic** (Data Integrity)
+- **Why**: Data corruption is unacceptable; Gramps Web modifications must be validated
+- **Spec Requirements**:
+  - Conflict detection algorithm (different dates, relationships, etc.)
+  - Write rules for Gramps Web modifications (non-conflicting vs. conflicting)
+  - Approval workflow for conflicting data
+  - Audit trail requirements for all SSOT modifications
+- **Deliverable**: `specs/ssot-validation.md` (before implementing `gramps_connector.py`)
+
+**2. Caching Strategy** (Architectural Foundation)
+- **Why**: Wrong caching decisions affect cost, performance, and complexity
+- **Spec Requirements**:
+  - Three-layer hierarchy (obituary, LLM, entities)
+  - Cache key generation algorithms
+  - Invalidation policies (time-based, content-based)
+  - Hit rate measurement
+- **Deliverable**: `specs/caching-strategy.md` (before implementing cache managers)
+
+**3. Confidence Scoring Rubric** (UX and Data Quality)
+- **Why**: Determines auto-store vs. review decisions; affects user trust
+- **Spec Requirements**:
+  - High/medium/low threshold values (0.85, 0.60)
+  - Scoring criteria per entity type (person, relationship)
+  - Factors: explicit terms, full names, dates, ambiguity
+  - Edge case handling (partial data, contradictions)
+- **Deliverable**: `specs/confidence-scoring.md` (before implementing LLM extractor)
+
+#### 2.1.3 Development Workflow by Phase
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    PHASE 1.1: FOUNDATION                    │
+│   SPEC ANCHORS → Write first                                │
+│   • SSOT validation rules (specs/ssot-validation.md)        │
+│   • Caching layer contracts (specs/caching-strategy.md)     │
+│   • Confidence scoring algorithm (specs/confidence-scoring.md)│
+└─────────────────────────────────────────────────────────────┘
+                             ↓
+┌─────────────────────────────────────────────────────────────┐
+│                 PHASE 1.2-1.4: CORE BUILD                   │
+│   BMAD ARTIFACTS → Build iteratively                        │
+│   • Obituary fetcher (learn scraping constraints)           │
+│   • LLM prompt engineering (tune based on results)          │
+│   • Gramps Web connector (guided by SSOT spec)              │
+│   • Matching algorithm (refine based on accuracy)           │
+│   • Review UI (iterate based on usability)                  │
+└─────────────────────────────────────────────────────────────┘
+                             ↓
+┌─────────────────────────────────────────────────────────────┐
+│              PHASE 1.5: REFINEMENT & DOCUMENTATION          │
+│   UPDATE SPECS based on learned constraints                │
+│   • Document actual LLM behavior patterns                   │
+│   • Update PRD with discovered limitations                  │
+│   • Tune confidence thresholds based on accuracy data       │
+│   • Formalize matching algorithm based on test results      │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### 2.1.4 Key Principle
+
+> **Spec what you can't afford to get wrong. Build what you need to learn.**
+
+**For This Project:**
+- **SPEC FIRST**: Data integrity rules, SSOT validation, audit trail, caching architecture, confidence scoring
+- **BUILD FIRST**: LLM extraction, matching algorithms, web scraping, UI components, Gramps API integration
+
+This ensures safety for critical paths while maintaining velocity for exploratory work.
+
+#### 2.1.5 When to Update Specs
+
+**Trigger Conditions for Spec Updates:**
+1. **LLM Behavior Discovery**: After 20+ obituaries processed, document actual accuracy patterns
+2. **Edge Cases Found**: When artifacts reveal scenarios not in original spec
+3. **Performance Data**: When cache hit rates or costs differ from assumptions
+4. **Matching Algorithm Tuning**: After measuring false positive/negative rates
+5. **User Feedback**: After manual review sessions reveal UX issues
+
+**Spec Update Process:**
+1. Document discovered constraint in artifact comments
+2. Create GitHub issue linking artifact to spec gap
+3. Update relevant spec document
+4. Update PRD section 15 (Open Questions & Decisions)
+5. Add to CHANGELOG.md with version bump
+
+#### 2.1.6 Why Not Open Spec?
+
+Open Spec is **not suitable** for this project because:
+- **External System Constraints**: Gramps Web, OpenAI APIs impose limitations discovered through integration
+- **LLM Unpredictability**: Cannot fully specify LLM output behavior without experimentation
+- **Rapid Prototyping Benefits**: AI co-pilot development thrives on fast artifact iteration
+- **Third-Party Dependencies**: Cannot control external API changes or obituary website structures
+
+Open Spec works best for greenfield projects with full control. This project integrates existing systems that reveal their constraints through building.
+
+#### 2.1.7 Documentation Strategy
+
+**Living Documents:**
+- `genealogy-prd.md` (this document) - Updated quarterly or when major architecture changes
+- `specs/*.md` - Spec anchors, updated when constraints discovered
+- `docs/architecture-decisions.md` - ADRs for major choices (e.g., "Why MariaDB not Redis")
+- `CHANGELOG.md` - Version history with spec updates
+
+**Artifact Documentation:**
+- Docstrings in code (implementation details)
+- `docs/api.md` - FastAPI endpoint documentation (auto-generated)
+- `README.md` - Quick start and setup instructions
+
+## 3. Technical Architecture
 
 ### 2.1 Technology Stack
 - **Backend**: Python with Gramps Web integration
@@ -1217,55 +1350,171 @@ CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 - Side-by-side comparison of SSOT vs. extracted data
 - Explicit confirmation for all modifications
 
-## 16. Development Phases
+## 16. Development Phases (BMAD Methodology)
 
-### 16.1 Phase 1.1: Foundation (Weeks 1-2)
-- Set up development environment (Podman Desktop on MacBook Pro)
-- Create podman-compose.dev.yml with bind mounts
-- Set up MariaDB container with schema initialization
-- Set up Gramps Web container
-- Basic backend API structure (FastAPI with hot reload)
-- Database connection and ORM setup (SQLAlchemy)
-- Configuration management (python-dotenv)
-- Health check endpoints
-- Basic logging to stdout
+### 16.1 Phase 1.1: Foundation (Weeks 1-2) - SPEC ANCHORS + BASIC ARTIFACTS
 
-### 16.2 Phase 1.2: Core Processing (Weeks 3-4)
-- Web scraping implementation (BeautifulSoup, requests)
-- OpenAI API integration with structured output
-- Entity extraction with LLM (persons, relationships)
-- Caching logic (all three layers: obituary, LLM, entities)
-- Basic Gramps Web integration (read/write API)
-- Confidence scoring logic
-- Testing with sample obituaries
+**SPEC ANCHORS (Write First):**
+- [ ] `specs/ssot-validation.md` - Complete SSOT validation rules
+- [ ] `specs/caching-strategy.md` - Three-layer caching architecture
+- [ ] `specs/confidence-scoring.md` - Confidence scoring algorithm
 
-### 16.3 Phase 1.3: Matching & Storage (Weeks 5-6)
-- Matching algorithm implementation (fuzzy string matching)
-- SSOT validation logic (conflict detection)
-- Confidence scoring logic
-- Gramps Web record creation (persons, families, events)
-- Relationship mapping
-- Source citation creation
-- Audit logging
-- Testing with diverse obituaries
+**ARTIFACTS (Build After Specs):**
+- [ ] Development environment setup (Podman Desktop on MacBook Pro)
+- [ ] `podman-compose.dev.yml` with bind mounts
+- [ ] MariaDB container with schema initialization
+- [ ] Gramps Web container setup
+- [ ] Basic FastAPI structure with hot reload
+- [ ] SQLAlchemy database connection and ORM
+- [ ] Configuration management (python-dotenv, Config helper class)
+- [ ] Health check endpoints (`/health`, `/ready`)
+- [ ] Structured logging to stdout (JSON format)
 
-### 16.4 Phase 1.4: UI & Review (Weeks 7-8)
-- Frontend development (React with Vite)
-- Input page (URL submission)
-- Processing page with progress indicators
-- Review interface for flagged entities
-- Side-by-side conflict comparison view
-- Results page with statistics
-- Configuration page (tunable thresholds)
-- Cost tracking dashboard
+**Validation:**
+- All three spec documents reviewed and approved
+- Containers start successfully
+- Database schema created
+- Health checks return 200 OK
+- Can insert/query test data via ORM
 
-### 16.5 Phase 1.5: Polish & Testing (Weeks 9-10)
-- Error handling improvements
-- Performance optimization (query optimization, indexing)
-- Comprehensive testing (unit, integration, end-to-end)
-- Documentation (user guide, API docs)
-- Bug fixes
-- Code cleanup and refactoring
+### 16.2 Phase 1.2: Core Processing (Weeks 3-4) - BMAD ITERATION
+
+**ARTIFACTS (Build and Iterate):**
+- [ ] Web scraping implementation (`services/obituary_fetcher.py`)
+  - BeautifulSoup/lxml for HTML parsing
+  - Respect robots.txt, rate limiting
+  - Handle common failure modes (404, 403, timeouts)
+- [ ] OpenAI API integration (`services/llm_extractor.py`)
+  - Structured output (JSON mode or function calling)
+  - Prompt engineering for entity extraction
+  - Token usage tracking
+- [ ] LLM cache manager (check before API calls)
+- [ ] Obituary cache manager (check before scraping)
+- [ ] Entity extraction pipeline (persons, relationships)
+- [ ] Basic Gramps Web connector (read-only queries)
+
+**Iteration Focus:**
+- Test with 5-10 diverse obituaries
+- Measure LLM accuracy (precision/recall)
+- Tune prompts based on actual outputs
+- Document LLM behavior patterns (what it gets right/wrong)
+
+**Validation:**
+- Can fetch and cache obituaries from major sites (Legacy.com, local funeral homes)
+- LLM extracts persons and relationships with reasonable accuracy (≥70%)
+- Cache hit rates measured and logged
+- No duplicate API calls for same content
+
+**SPEC UPDATES:**
+- Document actual LLM behavior in `specs/llm-behavior-patterns.md`
+- Update confidence scoring thresholds if accuracy data suggests changes
+
+### 16.3 Phase 1.3: Matching & Storage (Weeks 5-6) - SSOT VALIDATION
+
+**ARTIFACTS (Guided by SSOT Spec):**
+- [ ] Matching algorithm (`services/matcher.py`)
+  - Name similarity (exact, phonetic, fuzzy)
+  - Date range matching (birth/death windows)
+  - Location overlap detection
+- [ ] SSOT validation logic (implement from spec)
+  - Conflict detection (different dates, relationships)
+  - Non-conflicting addition detection
+  - Approval workflow triggers
+- [ ] Gramps Web write operations (`services/gramps_connector.py`)
+  - Create person records
+  - Create family records
+  - Create source citations
+  - Add events
+- [ ] Audit logging (all Gramps Web modifications)
+- [ ] Entity storage with match status tracking
+
+**Iteration Focus:**
+- Test with obituaries mentioning people already in Gramps Web
+- Measure false positive/negative match rates
+- Tune fuzzy matching thresholds
+- Verify SSOT validation catches all conflicts
+
+**Validation:**
+- Matching algorithm accuracy ≥80% (measured against test set)
+- No unauthorized Gramps Web modifications (100% validation)
+- All conflicts flagged for review (0% missed conflicts)
+- Complete audit trail in `audit_log` table
+- Can create new Gramps records with proper citations
+
+**SPEC UPDATES:**
+- Formalize matching algorithm based on accuracy data
+- Document edge cases found during testing
+- Update SSOT validation spec with discovered conflict types
+
+### 16.4 Phase 1.4: UI & Review (Weeks 7-8) - UX ITERATION
+
+**ARTIFACTS (Build and Refine):**
+- [ ] React frontend with Vite (`frontend/src/`)
+- [ ] Input page (URL submission, processing options)
+- [ ] Processing page with real-time progress
+  - Stage indicators (fetching, extracting, matching, storing)
+  - Cache hit notifications
+  - Cost estimation
+- [ ] Review interface for flagged entities
+  - Side-by-side conflict comparison (Gramps vs. Extracted)
+  - Confidence score visualizations
+  - Edit controls for corrections
+  - Resolution actions (keep Gramps, use extracted, merge, manual edit)
+- [ ] Results page with statistics
+- [ ] Configuration page (tunable thresholds)
+- [ ] Cost tracking dashboard
+
+**Iteration Focus:**
+- Usability testing with real obituaries
+- Refine conflict comparison UX based on clarity
+- Ensure resolution actions are clear and safe
+- Measure time to review an entity (target: <2 minutes)
+
+**Validation:**
+- Can submit URL and process end-to-end
+- Conflicts clearly displayed with highlighting
+- User can approve/reject/edit extractions
+- Changes persist to Gramps Web correctly
+- Cost tracking displays accurate data
+
+**SPEC UPDATES:**
+- Document UX patterns in `docs/ui-guidelines.md`
+- Update review workflow based on usability findings
+
+### 16.5 Phase 1.5: Polish & Testing (Weeks 9-10) - REFINEMENT
+
+**ARTIFACTS (Improve and Document):**
+- [ ] Comprehensive error handling
+  - User-friendly error messages
+  - Retry logic for transient failures
+  - Graceful degradation
+- [ ] Performance optimization
+  - SQL query optimization
+  - Index tuning based on slow query log
+  - Connection pool sizing
+- [ ] Testing suite
+  - Unit tests (business logic)
+  - Integration tests (database, API)
+  - End-to-end tests (full pipeline)
+  - Test with 50+ curated obituaries
+- [ ] Documentation
+  - User guide (`docs/user-guide.md`)
+  - API documentation (auto-generated from FastAPI)
+  - Developer setup (`docs/developer-setup.md`)
+  - Architecture diagrams
+- [ ] Bug fixes and code cleanup
+
+**Validation:**
+- All test cases pass (≥90% code coverage)
+- Performance targets met (processing time <30s)
+- Cache hit rate ≥70%
+- Cost per obituary <$0.10
+- Documentation complete and accurate
+
+**SPEC UPDATES:**
+- Final PRD update with lessons learned
+- Update `docs/architecture-decisions.md` with rationale for major choices
+- Create `CHANGELOG.md` with version 1.0.0 release notes
 
 ### 16.6 Phase 2: Production Preparation (Post-Phase 1)
 - Create production Dockerfiles (multi-stage builds)
