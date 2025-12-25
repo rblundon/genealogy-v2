@@ -44,7 +44,8 @@ services:
       
       # External Gramps Web Configuration
       GRAMPS_WEB_URL: ${GRAMPS_WEB_URL}
-      GRAMPS_API_TOKEN: ${GRAMPS_API_TOKEN}
+      GRAMPS_USERNAME: ${GRAMPS_USERNAME}
+      GRAMPS_PASSWORD: ${GRAMPS_PASSWORD}
       
       # MariaDB Configuration
       MARIADB_HOST: mariadb

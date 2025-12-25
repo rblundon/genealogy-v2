@@ -3,9 +3,10 @@
 # ============================================================================
 
 from sqlalchemy import (
-    Column, Integer, String, Text, TIMESTAMP, Boolean, 
-    Enum, ForeignKey, Index, DECIMAL, JSON, VARCHAR, DATE, MEDIUMTEXT
+    Column, Integer, String, Text, TIMESTAMP, Boolean,
+    Enum, ForeignKey, Index, DECIMAL, JSON, VARCHAR, DATE
 )
+from sqlalchemy.dialects.mysql import MEDIUMTEXT
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from datetime import datetime
