@@ -1,5 +1,5 @@
 # FILE: backend/models/cache_models.py
-# SQLAlchemy models for cache database
+# SQLAlchemy models for cache database - FACT-BASED ARCHITECTURE
 # ============================================================================
 
 from sqlalchemy import (
@@ -24,7 +24,7 @@ class ObituaryCache(Base):
     raw_html = Column(MEDIUMTEXT)
     extracted_text = Column(Text)
     fetch_timestamp = Column(TIMESTAMP, server_default=func.current_timestamp())
-    last_accessed = Column(TIMESTAMP, server_default=func.current_timestamp(), 
+    last_accessed = Column(TIMESTAMP, server_default=func.current_timestamp(),
                           onupdate=func.current_timestamp())
     http_status_code = Column(Integer)
     fetch_error = Column(Text)
@@ -36,8 +36,7 @@ class ObituaryCache(Base):
 
     # Relationships
     llm_cache_entries = relationship("LLMCache", back_populates="obituary", cascade="all, delete-orphan")
-    extracted_persons = relationship("ExtractedPerson", back_populates="obituary", cascade="all, delete-orphan")
-    extracted_relationships = relationship("ExtractedRelationship", back_populates="obituary", cascade="all, delete-orphan")
+    extracted_facts = relationship("ExtractedFact", back_populates="obituary", cascade="all, delete-orphan")
     gramps_mappings = relationship("GrampsRecordMapping", back_populates="obituary", cascade="all, delete-orphan")
     processing_jobs = relationship("ProcessingQueue", back_populates="obituary", cascade="all, delete-orphan")
 
@@ -77,91 +76,110 @@ class LLMCache(Base):
         return f"<LLMCache(id={self.id}, provider='{self.llm_provider}', model='{self.model_version}')>"
 
 
-class ExtractedPerson(Base):
-    """Stores extracted person entities from obituaries"""
-    __tablename__ = 'extracted_persons'
+class ExtractedFact(Base):
+    """Stores individual facts (claims) extracted from obituaries"""
+    __tablename__ = 'extracted_facts'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     obituary_cache_id = Column(Integer, ForeignKey('obituary_cache.id', ondelete='CASCADE'), nullable=False)
     llm_cache_id = Column(Integer, ForeignKey('llm_cache.id', ondelete='SET NULL'))
-    full_name = Column(String(255), nullable=False, index=True)
-    given_names = Column(String(255))
-    surname = Column(String(255), index=True)
-    maiden_name = Column(String(255))
-    age = Column(Integer)
-    birth_date = Column(DATE)
-    birth_date_circa = Column(Boolean, default=False)
-    death_date = Column(DATE)
-    death_date_circa = Column(Boolean, default=False)
-    birth_location = Column(String(500))
-    death_location = Column(String(500))
-    residence_location = Column(String(500))
-    gender = Column(Enum('M', 'F', 'U'), default='U')
-    is_deceased_primary = Column(Boolean, default=False)
-    confidence_score = Column(DECIMAL(3, 2), index=True)
-    extraction_notes = Column(Text)
-    gramps_person_id = Column(String(50), index=True)
-    match_status = Column(
-        Enum('unmatched', 'matched', 'created', 'review_needed'),
-        default='unmatched',
+
+    fact_type = Column(
+        Enum(
+            'person_name',
+            'person_death_date',
+            'person_death_age',
+            'person_birth_date',
+            'person_gender',
+            'maiden_name',
+            'relationship',
+            'marriage',
+            'location_birth',
+            'location_death',
+            'location_residence',
+            'survived_by',
+            'preceded_in_death'
+        ),
+        nullable=False,
         index=True
     )
+
+    subject_name = Column(String(255), nullable=False, index=True)
+    subject_role = Column(
+        Enum(
+            'deceased_primary',
+            'spouse',
+            'child',
+            'parent',
+            'sibling',
+            'grandchild',
+            'grandparent',
+            'in_law',
+            'other'
+        ),
+        default='other',
+        index=True
+    )
+
+    fact_value = Column(Text, nullable=False)
+
+    related_name = Column(String(255))
+    relationship_type = Column(String(100))
+
+    extracted_context = Column(Text)
+    source_sentence = Column(Text)
+
+    is_inferred = Column(Boolean, default=False)
+    inference_basis = Column(Text)
+
+    confidence_score = Column(DECIMAL(3, 2), nullable=False, index=True)
+
+    gramps_person_id = Column(String(50), index=True)
+    gramps_family_id = Column(String(50))
+    gramps_event_id = Column(String(50))
+    resolution_status = Column(
+        Enum('unresolved', 'resolved', 'conflicting', 'rejected'),
+        default='unresolved',
+        index=True
+    )
+    resolution_notes = Column(Text)
+    resolved_timestamp = Column(TIMESTAMP)
+
     created_timestamp = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_timestamp = Column(TIMESTAMP, server_default=func.current_timestamp(),
                               onupdate=func.current_timestamp())
 
     # Relationships
-    obituary = relationship("ObituaryCache", back_populates="extracted_persons")
+    obituary = relationship("ObituaryCache", back_populates="extracted_facts")
     llm_cache = relationship("LLMCache")
-    relationships_as_person1 = relationship(
-        "ExtractedRelationship",
-        foreign_keys="ExtractedRelationship.person1_id",
-        back_populates="person1"
-    )
-    relationships_as_person2 = relationship(
-        "ExtractedRelationship",
-        foreign_keys="ExtractedRelationship.person2_id",
-        back_populates="person2"
-    )
-    gramps_mappings = relationship("GrampsRecordMapping", back_populates="extracted_person")
+    gramps_mappings = relationship("GrampsRecordMapping", back_populates="extracted_fact")
 
     def __repr__(self):
-        return f"<ExtractedPerson(id={self.id}, name='{self.full_name}', confidence={self.confidence_score})>"
+        return (f"<ExtractedFact(id={self.id}, type='{self.fact_type}', "
+                f"subject='{self.subject_name}', confidence={self.confidence_score})>")
 
-
-class ExtractedRelationship(Base):
-    """Stores extracted relationships between persons"""
-    __tablename__ = 'extracted_relationships'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    obituary_cache_id = Column(Integer, ForeignKey('obituary_cache.id', ondelete='CASCADE'), nullable=False)
-    llm_cache_id = Column(Integer, ForeignKey('llm_cache.id', ondelete='SET NULL'))
-    person1_id = Column(Integer, ForeignKey('extracted_persons.id', ondelete='CASCADE'), nullable=False, index=True)
-    person2_id = Column(Integer, ForeignKey('extracted_persons.id', ondelete='CASCADE'), nullable=False, index=True)
-    relationship_type = Column(String(100), nullable=False, index=True)
-    relationship_detail = Column(String(255))
-    confidence_score = Column(DECIMAL(3, 2), index=True)
-    extracted_context = Column(Text)
-    gramps_family_id = Column(String(50))
-    match_status = Column(
-        Enum('unmatched', 'matched', 'created', 'review_needed'),
-        default='unmatched',
-        index=True
-    )
-    created_timestamp = Column(TIMESTAMP, server_default=func.current_timestamp())
-
-    # Relationships
-    obituary = relationship("ObituaryCache", back_populates="extracted_relationships")
-    llm_cache = relationship("LLMCache")
-    person1 = relationship("ExtractedPerson", foreign_keys=[person1_id], back_populates="relationships_as_person1")
-    person2 = relationship("ExtractedPerson", foreign_keys=[person2_id], back_populates="relationships_as_person2")
-
-    __table_args__ = (
-        Index('unique_relationship', 'person1_id', 'person2_id', 'relationship_type', unique=True),
-    )
-
-    def __repr__(self):
-        return f"<ExtractedRelationship(id={self.id}, type='{self.relationship_type}', confidence={self.confidence_score})>"
+    def to_dict(self):
+        """Convert to dictionary for API responses"""
+        return {
+            'id': self.id,
+            'obituary_cache_id': self.obituary_cache_id,
+            'fact_type': self.fact_type,
+            'subject_name': self.subject_name,
+            'subject_role': self.subject_role,
+            'fact_value': self.fact_value,
+            'related_name': self.related_name,
+            'relationship_type': self.relationship_type,
+            'extracted_context': self.extracted_context,
+            'source_sentence': self.source_sentence,
+            'is_inferred': self.is_inferred,
+            'inference_basis': self.inference_basis,
+            'confidence_score': float(self.confidence_score) if self.confidence_score else None,
+            'resolution_status': self.resolution_status,
+            'gramps_person_id': self.gramps_person_id,
+            'gramps_family_id': self.gramps_family_id,
+            'gramps_event_id': self.gramps_event_id,
+            'created_timestamp': self.created_timestamp.isoformat() if self.created_timestamp else None,
+        }
 
 
 class GrampsRecordMapping(Base):
@@ -175,13 +193,12 @@ class GrampsRecordMapping(Base):
         nullable=False
     )
     gramps_record_id = Column(String(50), nullable=False)
-    extracted_person_id = Column(Integer, ForeignKey('extracted_persons.id', ondelete='SET NULL'))
-    extracted_relationship_id = Column(Integer, ForeignKey('extracted_relationships.id', ondelete='SET NULL'))
+    extracted_fact_id = Column(Integer, ForeignKey('extracted_facts.id', ondelete='SET NULL'))
     created_timestamp = Column(TIMESTAMP, server_default=func.current_timestamp())
 
     # Relationships
     obituary = relationship("ObituaryCache", back_populates="gramps_mappings")
-    extracted_person = relationship("ExtractedPerson", back_populates="gramps_mappings")
+    extracted_fact = relationship("ExtractedFact", back_populates="gramps_mappings")
 
     __table_args__ = (
         Index('idx_gramps_record', 'gramps_record_type', 'gramps_record_id'),
@@ -268,4 +285,3 @@ class AuditLog(Base):
 
     def __repr__(self):
         return f"<AuditLog(id={self.id}, action='{self.action_type}', entity='{self.entity_type}')>"
-
