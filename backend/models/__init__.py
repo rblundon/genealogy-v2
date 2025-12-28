@@ -7,7 +7,10 @@ from .cache_models import (
     GrampsRecordMapping,
     ConfigSettings,
     ProcessingQueue,
-    AuditLog
+    AuditLog,
+    PersonResolution,
+    FactResolution,
+    GrampsCommitBatch
 )
 
 __all__ = [
@@ -21,5 +24,8 @@ __all__ = [
     'GrampsRecordMapping',
     'ConfigSettings',
     'ProcessingQueue',
-    'AuditLog'
+    'AuditLog',
+    'PersonResolution',
+    'FactResolution',
+    'GrampsCommitBatch'
 ]

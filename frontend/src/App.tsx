@@ -1,5 +1,8 @@
 import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
 import { Review } from './pages/Review';
+import { Obituaries } from './pages/Obituaries';
+import { People } from './pages/People';
+import { PersonDetail } from './pages/PersonDetail';
 
 function NavLink({ to, children }: { to: string; children: React.ReactNode }) {
   const location = useLocation();
@@ -55,6 +58,8 @@ function Layout({ children }: { children: React.ReactNode }) {
           </Link>
           <nav style={{ display: 'flex', gap: '8px' }}>
             <NavLink to="/">Home</NavLink>
+            <NavLink to="/obituaries">Obituaries</NavLink>
+            <NavLink to="/people">People</NavLink>
             <NavLink to="/review">Review Facts</NavLink>
           </nav>
         </div>
@@ -84,6 +89,42 @@ function Home() {
         }}
       >
         <Link
+          to="/obituaries"
+          style={{
+            padding: '24px',
+            backgroundColor: '#ffffff',
+            borderRadius: '8px',
+            border: '1px solid #e5e7eb',
+            textDecoration: 'none',
+            color: 'inherit',
+          }}
+        >
+          <h2 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '8px', color: '#111827' }}>
+            Obituaries
+          </h2>
+          <p style={{ fontSize: '14px', color: '#6b7280' }}>
+            View all processed obituaries, reprocess or delete them.
+          </p>
+        </Link>
+        <Link
+          to="/people"
+          style={{
+            padding: '24px',
+            backgroundColor: '#ffffff',
+            borderRadius: '8px',
+            border: '1px solid #e5e7eb',
+            textDecoration: 'none',
+            color: 'inherit',
+          }}
+        >
+          <h2 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '8px', color: '#111827' }}>
+            People
+          </h2>
+          <p style={{ fontSize: '14px', color: '#6b7280' }}>
+            View all extracted people, see their facts, and sync to Gramps.
+          </p>
+        </Link>
+        <Link
           to="/review"
           style={{
             padding: '24px',
@@ -98,7 +139,7 @@ function Home() {
             Review Facts
           </h2>
           <p style={{ fontSize: '14px', color: '#6b7280' }}>
-            View extracted facts from obituaries, approve or reject them, and sync to Gramps.
+            Process new obituaries and review extracted facts.
           </p>
         </Link>
       </div>
@@ -112,6 +153,9 @@ function App() {
       <Layout>
         <Routes>
           <Route path="/" element={<Home />} />
+          <Route path="/obituaries" element={<Obituaries />} />
+          <Route path="/people" element={<People />} />
+          <Route path="/people/:name" element={<PersonDetail />} />
           <Route path="/review" element={<Review />} />
         </Routes>
       </Layout>

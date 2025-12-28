@@ -1,4 +1,5 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import type { Fact, FactsResponse, SubjectRole } from '../types';
 import { getObituaryFacts, processObituary, updateFactStatus, bulkUpdateFactStatus } from '../services/api';
 import { FactClusterCard } from '../components/FactClusterCard';
@@ -10,6 +11,7 @@ interface FactCluster {
 }
 
 export function Review() {
+  const [searchParams] = useSearchParams();
   const [obituaryId, setObituaryId] = useState<number | null>(null);
   const [obituaryUrl, setObituaryUrl] = useState('');
   const [urlInput, setUrlInput] = useState('');
@@ -60,6 +62,17 @@ export function Review() {
       setLoading(false);
     }
   }, [groupFactsBySubject]);
+
+  // Load obituary from URL query parameter
+  useEffect(() => {
+    const idParam = searchParams.get('id');
+    if (idParam) {
+      const id = parseInt(idParam);
+      if (!isNaN(id)) {
+        loadFacts(id);
+      }
+    }
+  }, [searchParams, loadFacts]);
 
   // Process a new obituary URL
   const handleProcessUrl = async () => {

@@ -1,5 +1,15 @@
 import axios from 'axios';
-import type { Fact, FactsResponse, ProcessObituaryResponse, Obituary } from '../types';
+import type {
+  Fact,
+  FactsResponse,
+  ProcessObituaryResponse,
+  Obituary,
+  ObituarySummary,
+  PersonSummary,
+  PersonDetail,
+  GrampsMatch,
+  SyncResult,
+} from '../types';
 
 // Use same hostname as frontend, but port 8000 for backend
 const getApiUrl = () => {
@@ -84,6 +94,77 @@ export async function bulkUpdateFactStatus(
     fact_ids: factIds,
     resolution_status: status,
   });
+  return response.data;
+}
+
+// ============================================================================
+// Obituaries List Endpoints
+// ============================================================================
+
+// Get all obituaries
+export async function getObituaries(): Promise<{ count: number; obituaries: ObituarySummary[] }> {
+  const response = await api.get('/api/obituaries/');
+  return response.data;
+}
+
+// Delete an obituary
+export async function deleteObituary(
+  obituaryId: number
+): Promise<{ deleted: boolean; obituary_id: number; url: string }> {
+  const response = await api.delete(`/api/obituaries/${obituaryId}`);
+  return response.data;
+}
+
+// ============================================================================
+// Persons Endpoints
+// ============================================================================
+
+// Get all persons
+export async function getPersons(): Promise<{ count: number; persons: PersonSummary[] }> {
+  const response = await api.get('/api/persons/');
+  return response.data;
+}
+
+// Get person by name
+export async function getPersonByName(name: string): Promise<PersonDetail> {
+  const response = await api.get('/api/persons/by-name/detail', { params: { name } });
+  return response.data;
+}
+
+// Get Gramps match suggestions for a person
+export async function getGrampsMatches(
+  name: string
+): Promise<{ person_name: string; matches: GrampsMatch[] }> {
+  const response = await api.get('/api/persons/by-name/gramps-matches', { params: { name } });
+  return response.data;
+}
+
+// Sync person to Gramps
+export async function syncPerson(
+  name: string,
+  options: {
+    gramps_handle?: string;
+    create_new?: boolean;
+    include_relationships?: boolean;
+  }
+): Promise<SyncResult> {
+  const response = await api.post('/api/persons/by-name/sync', options, { params: { name } });
+  return response.data;
+}
+
+// Skip person sync
+export async function skipPersonSync(
+  name: string
+): Promise<{ success: boolean; person_name: string; action: string }> {
+  const response = await api.post('/api/persons/by-name/skip', {}, { params: { name } });
+  return response.data;
+}
+
+// Delete person and their facts
+export async function deletePerson(
+  name: string
+): Promise<{ deleted: boolean; person_name: string; facts_deleted: number; resolutions_deleted: number }> {
+  const response = await api.delete('/api/persons/by-name/delete', { params: { name } });
   return response.data;
 }
 

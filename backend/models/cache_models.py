@@ -286,3 +286,158 @@ class AuditLog(Base):
 
     def __repr__(self):
         return f"<AuditLog(id={self.id}, action='{self.action_type}', entity='{self.entity_type}')>"
+
+
+class PersonResolution(Base):
+    """Maps extracted names to Gramps handles"""
+    __tablename__ = 'person_resolution'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    obituary_cache_id = Column(Integer, ForeignKey('obituary_cache.id', ondelete='CASCADE'), nullable=False)
+
+    extracted_name = Column(String(255), nullable=False, index=True)
+    subject_role = Column(String(50))
+
+    gramps_handle = Column(String(50), index=True)
+    gramps_id = Column(String(50))
+    match_score = Column(DECIMAL(3, 2))
+    match_method = Column(
+        Enum('exact', 'fuzzy', 'manual', 'created'),
+        default='fuzzy'
+    )
+
+    status = Column(
+        Enum('pending', 'matched', 'create_new', 'rejected', 'committed'),
+        default='pending',
+        index=True
+    )
+
+    user_modified = Column(Boolean, default=False)
+    modified_first_name = Column(String(255))
+    modified_surname = Column(String(255))
+    modified_gender = Column(Integer)
+
+    created_timestamp = Column(TIMESTAMP, server_default=func.current_timestamp())
+    resolved_timestamp = Column(TIMESTAMP)
+    committed_timestamp = Column(TIMESTAMP)
+
+    # Relationships
+    obituary = relationship("ObituaryCache")
+    fact_resolutions = relationship("FactResolution", back_populates="person_resolution",
+                                    foreign_keys="FactResolution.person_resolution_id")
+
+    __table_args__ = (
+        Index('unique_person_per_obituary', 'obituary_cache_id', 'extracted_name', unique=True),
+    )
+
+    def __repr__(self):
+        return f"<PersonResolution(id={self.id}, name='{self.extracted_name}', status='{self.status}')>"
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'obituary_cache_id': self.obituary_cache_id,
+            'extracted_name': self.extracted_name,
+            'subject_role': self.subject_role,
+            'gramps_handle': self.gramps_handle,
+            'gramps_id': self.gramps_id,
+            'match_score': float(self.match_score) if self.match_score else None,
+            'match_method': self.match_method,
+            'status': self.status,
+            'user_modified': self.user_modified,
+            'modified_first_name': self.modified_first_name,
+            'modified_surname': self.modified_surname,
+            'modified_gender': self.modified_gender,
+        }
+
+
+class FactResolution(Base):
+    """Tracks approval status for each fact"""
+    __tablename__ = 'fact_resolution'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    extracted_fact_id = Column(Integer, ForeignKey('extracted_facts.id', ondelete='CASCADE'), nullable=False)
+    person_resolution_id = Column(Integer, ForeignKey('person_resolution.id', ondelete='SET NULL'))
+    related_person_resolution_id = Column(Integer, ForeignKey('person_resolution.id', ondelete='SET NULL'))
+
+    action = Column(
+        Enum('add', 'update', 'skip', 'reject'),
+        default='add',
+        index=True
+    )
+
+    status = Column(
+        Enum('pending', 'approved', 'rejected', 'committed'),
+        default='pending',
+        index=True
+    )
+
+    gramps_has_value = Column(Boolean, default=False)
+    gramps_current_value = Column(Text)
+    is_conflict = Column(Boolean, default=False)
+
+    user_modified = Column(Boolean, default=False)
+    modified_value = Column(Text)
+
+    created_timestamp = Column(TIMESTAMP, server_default=func.current_timestamp())
+    approved_timestamp = Column(TIMESTAMP)
+    committed_timestamp = Column(TIMESTAMP)
+
+    # Relationships
+    extracted_fact = relationship("ExtractedFact")
+    person_resolution = relationship("PersonResolution", foreign_keys=[person_resolution_id],
+                                     back_populates="fact_resolutions")
+    related_person_resolution = relationship("PersonResolution", foreign_keys=[related_person_resolution_id])
+
+    __table_args__ = (
+        Index('unique_fact_resolution', 'extracted_fact_id', unique=True),
+    )
+
+    def __repr__(self):
+        return f"<FactResolution(id={self.id}, fact_id={self.extracted_fact_id}, status='{self.status}')>"
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'extracted_fact_id': self.extracted_fact_id,
+            'person_resolution_id': self.person_resolution_id,
+            'related_person_resolution_id': self.related_person_resolution_id,
+            'action': self.action,
+            'status': self.status,
+            'gramps_has_value': self.gramps_has_value,
+            'gramps_current_value': self.gramps_current_value,
+            'is_conflict': self.is_conflict,
+            'user_modified': self.user_modified,
+            'modified_value': self.modified_value,
+        }
+
+
+class GrampsCommitBatch(Base):
+    """Tracks commits to Gramps"""
+    __tablename__ = 'gramps_commit_batch'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    obituary_cache_id = Column(Integer, ForeignKey('obituary_cache.id', ondelete='CASCADE'), nullable=False)
+
+    persons_created = Column(Integer, default=0)
+    persons_updated = Column(Integer, default=0)
+    families_created = Column(Integer, default=0)
+    events_created = Column(Integer, default=0)
+    facts_committed = Column(Integer, default=0)
+
+    status = Column(
+        Enum('pending', 'in_progress', 'completed', 'failed', 'rolled_back'),
+        default='pending',
+        index=True
+    )
+    error_message = Column(Text)
+
+    created_timestamp = Column(TIMESTAMP, server_default=func.current_timestamp())
+    started_timestamp = Column(TIMESTAMP)
+    completed_timestamp = Column(TIMESTAMP)
+
+    # Relationships
+    obituary = relationship("ObituaryCache")
+
+    def __repr__(self):
+        return f"<GrampsCommitBatch(id={self.id}, status='{self.status}')>"

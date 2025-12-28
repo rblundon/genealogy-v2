@@ -425,3 +425,155 @@ async def bulk_update_fact_status(
         'requested_ids': request.fact_ids,
         'new_status': request.resolution_status
     }
+
+
+# ============================================================================
+# List and Delete Endpoints
+# ============================================================================
+
+def parse_name(full_name: str) -> tuple:
+    """
+    Parse a full name into (first, middle, last, suffix).
+
+    Examples:
+        "John Smith" -> ("John", None, "Smith", None)
+        "John Michael Smith" -> ("John", "Michael", "Smith", None)
+        "John Smith Jr." -> ("John", None, "Smith", "Jr.")
+    """
+    if not full_name:
+        return (None, None, None, None)
+
+    parts = full_name.strip().split()
+    if not parts:
+        return (None, None, None, None)
+
+    # Check for suffix
+    suffixes = ['Jr.', 'Jr', 'Sr.', 'Sr', 'II', 'III', 'IV', 'V']
+    suffix = None
+    if len(parts) > 1 and parts[-1] in suffixes:
+        suffix = parts.pop()
+
+    if len(parts) == 1:
+        return (parts[0], None, None, suffix)
+    elif len(parts) == 2:
+        return (parts[0], None, parts[1], suffix)
+    else:
+        # First name, middle name(s), last name
+        return (parts[0], ' '.join(parts[1:-1]), parts[-1], suffix)
+
+
+def format_name_last_first(full_name: str) -> str:
+    """
+    Format name as "Last, First M." (Last, First Middle-initial).
+
+    Examples:
+        "John Smith" -> "Smith, John"
+        "John Michael Smith" -> "Smith, John M."
+        "Jane" -> "Jane"
+    """
+    first, middle, last, suffix = parse_name(full_name)
+
+    if not last:
+        return first or full_name
+
+    result = last
+    if first:
+        result += f", {first}"
+    if middle:
+        # Use initial
+        result += f" {middle[0]}."
+    if suffix:
+        result += f" {suffix}"
+
+    return result
+
+
+@router.get("/")
+async def list_obituaries(
+    db: Session = Depends(get_db)
+) -> Dict:
+    """
+    List all obituaries with primary deceased person name.
+    Sorted alphabetically by last name.
+    """
+    from sqlalchemy import func, case
+
+    # Get all completed obituaries with their facts
+    obituaries = db.query(ObituaryCache).filter(
+        ObituaryCache.processing_status == 'completed'
+    ).all()
+
+    results = []
+    for obit in obituaries:
+        # Get the primary deceased person's name
+        primary_fact = db.query(ExtractedFact).filter(
+            ExtractedFact.obituary_cache_id == obit.id,
+            ExtractedFact.subject_role == 'deceased_primary',
+            ExtractedFact.fact_type == 'person_name'
+        ).first()
+
+        primary_name = primary_fact.subject_name if primary_fact else "Unknown"
+
+        # Count facts
+        fact_count = db.query(ExtractedFact).filter(
+            ExtractedFact.obituary_cache_id == obit.id
+        ).count()
+
+        # Count unresolved facts
+        unresolved_count = db.query(ExtractedFact).filter(
+            ExtractedFact.obituary_cache_id == obit.id,
+            ExtractedFact.resolution_status == 'unresolved'
+        ).count()
+
+        # Parse name for sorting
+        first, middle, last, suffix = parse_name(primary_name)
+
+        results.append({
+            'id': obit.id,
+            'url': obit.url,
+            'primary_name': primary_name,
+            'primary_name_formatted': format_name_last_first(primary_name),
+            'last_name': last or '',
+            'first_name': first or '',
+            'status': obit.processing_status,
+            'fact_count': fact_count,
+            'unresolved_count': unresolved_count,
+            'created_at': obit.fetch_timestamp.isoformat() if obit.fetch_timestamp else None,
+        })
+
+    # Sort by last name, then first name
+    results.sort(key=lambda x: (x['last_name'].lower(), x['first_name'].lower()))
+
+    return {
+        'count': len(results),
+        'obituaries': results
+    }
+
+
+@router.delete("/{obituary_id}")
+async def delete_obituary(
+    obituary_id: int,
+    db: Session = Depends(get_db)
+) -> Dict:
+    """
+    Delete an obituary and all associated facts.
+    """
+    obituary = db.query(ObituaryCache).filter(
+        ObituaryCache.id == obituary_id
+    ).first()
+
+    if not obituary:
+        raise HTTPException(status_code=404, detail=f"Obituary {obituary_id} not found")
+
+    # Facts will be cascade deleted due to relationship setup
+    url = obituary.url
+    db.delete(obituary)
+    db.commit()
+
+    logger.info(f"Deleted obituary {obituary_id}: {url}")
+
+    return {
+        'deleted': True,
+        'obituary_id': obituary_id,
+        'url': url
+    }

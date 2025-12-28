@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 
 from models.database import engine, Base, get_db, SessionLocal
-from api.endpoints import gramps, obituaries
+from api.endpoints import gramps, obituaries, resolution, persons
 
 
 # Configure structured JSON logging
@@ -96,6 +96,8 @@ app.add_middleware(
 # Include API routers
 app.include_router(gramps.router)
 app.include_router(obituaries.router)
+app.include_router(resolution.router)
+app.include_router(persons.router)
 
 
 @app.get("/health")

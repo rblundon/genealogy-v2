@@ -85,3 +85,83 @@ export interface FactsResponse {
   facts_count: number;
   facts: Fact[];
 }
+
+// Obituary summary for list view
+export interface ObituarySummary {
+  id: number;
+  url: string;
+  primary_name: string;
+  primary_name_formatted: string;
+  last_name: string;
+  first_name: string;
+  status: string;
+  fact_count: number;
+  unresolved_count: number;
+  created_at: string | null;
+}
+
+// Person types
+export type SyncStatus = 'pending' | 'matched' | 'created' | 'committed' | 'rejected';
+
+export interface PersonSummary {
+  id: number;
+  name: string;
+  name_formatted: string;
+  first_name: string | null;
+  middle_name: string | null;
+  last_name: string | null;
+  primary_role: SubjectRole;
+  obituary_count: number;
+  fact_count: number;
+  resolved_count: number;
+  unresolved_count: number;
+  gramps_handle: string | null;
+  gramps_id: string | null;
+  sync_status: SyncStatus;
+}
+
+export interface ObituaryFacts {
+  obituary_id: number;
+  obituary_url: string;
+  role: SubjectRole;
+  facts: Fact[];
+}
+
+export interface PersonDetail {
+  id: number;
+  name: string;
+  name_formatted: string;
+  first_name: string | null;
+  middle_name: string | null;
+  last_name: string | null;
+  gramps_handle: string | null;
+  gramps_id: string | null;
+  sync_status: SyncStatus;
+  obituary_facts: ObituaryFacts[];
+}
+
+export interface GrampsMatch {
+  handle: string;
+  gramps_id: string;
+  name: string;
+  first_name: string;
+  surname: string;
+  score: number;
+  match_details: {
+    first_name_score: number;
+    surname_score: number;
+    token_score: number;
+    exact_surname: boolean;
+    exact_first: boolean;
+  };
+}
+
+export interface SyncResult {
+  success: boolean;
+  person_name: string;
+  gramps_handle: string | null;
+  gramps_id: string | null;
+  action: 'created' | 'linked' | 'skipped';
+  events_created: number;
+  families_created: number;
+}
