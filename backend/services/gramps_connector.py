@@ -273,6 +273,357 @@ class GrampsConnector:
 
         return None
 
+    async def get_all_people(self) -> list[dict]:
+        """
+        Get all people from Gramps database.
+
+        Returns:
+            List of person dictionaries or empty list if request fails
+        """
+        if not self.base_url:
+            return []
+
+        token = await self._get_token()
+        if not token:
+            return []
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=self.timeout,
+                follow_redirects=True,
+            ) as client:
+                response = await client.get(
+                    f"{self.base_url}/api/people/",
+                    headers=self._get_headers(token),
+                )
+                if response.status_code == 200:
+                    return response.json()
+                else:
+                    logger.error(f"Failed to get people: HTTP {response.status_code}")
+        except Exception as e:
+            logger.error(f"Error getting people: {e}")
+
+        return []
+
+    async def get_person(self, handle: str) -> Optional[dict]:
+        """
+        Get a single person by handle.
+
+        Args:
+            handle: Gramps handle for the person
+
+        Returns:
+            Person dictionary or None if not found
+        """
+        if not self.base_url:
+            return None
+
+        token = await self._get_token()
+        if not token:
+            return None
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=self.timeout,
+                follow_redirects=True,
+            ) as client:
+                response = await client.get(
+                    f"{self.base_url}/api/people/{handle}",
+                    headers=self._get_headers(token),
+                )
+                if response.status_code == 200:
+                    return response.json()
+                elif response.status_code == 404:
+                    return None
+                else:
+                    logger.error(f"Failed to get person {handle}: HTTP {response.status_code}")
+        except Exception as e:
+            logger.error(f"Error getting person {handle}: {e}")
+
+        return None
+
+    async def search_people(self, query: str) -> list[dict]:
+        """
+        Search for people matching a query string.
+
+        Args:
+            query: Search query (name, etc.)
+
+        Returns:
+            List of matching person dictionaries
+        """
+        if not self.base_url or not query:
+            return []
+
+        token = await self._get_token()
+        if not token:
+            return []
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=self.timeout,
+                follow_redirects=True,
+            ) as client:
+                response = await client.get(
+                    f"{self.base_url}/api/search/",
+                    params={"query": query},
+                    headers=self._get_headers(token),
+                )
+                if response.status_code == 200:
+                    results = response.json()
+                    # Filter to only person results
+                    return [r.get("object", r) for r in results
+                            if r.get("object", {}).get("primary_name") is not None]
+                else:
+                    logger.error(f"Search failed: HTTP {response.status_code}")
+        except Exception as e:
+            logger.error(f"Error searching people: {e}")
+
+        return []
+
+    async def get_all_families(self) -> list[dict]:
+        """
+        Get all families from Gramps database.
+
+        Returns:
+            List of family dictionaries or empty list if request fails
+        """
+        if not self.base_url:
+            return []
+
+        token = await self._get_token()
+        if not token:
+            return []
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=self.timeout,
+                follow_redirects=True,
+            ) as client:
+                response = await client.get(
+                    f"{self.base_url}/api/families/",
+                    headers=self._get_headers(token),
+                )
+                if response.status_code == 200:
+                    return response.json()
+                else:
+                    logger.error(f"Failed to get families: HTTP {response.status_code}")
+        except Exception as e:
+            logger.error(f"Error getting families: {e}")
+
+        return []
+
+    async def create_person(self, person_data: dict) -> Optional[dict]:
+        """
+        Create a new person in Gramps.
+
+        Args:
+            person_data: Person data following Gramps person schema
+
+        Returns:
+            Created person data with handle, or None if failed
+        """
+        if not self.base_url:
+            return None
+
+        token = await self._get_token()
+        if not token:
+            return None
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=self.timeout,
+                follow_redirects=True,
+            ) as client:
+                response = await client.post(
+                    f"{self.base_url}/api/people/",
+                    headers=self._get_headers(token),
+                    json=person_data,
+                )
+                if response.status_code in (200, 201):
+                    data = response.json()
+                    # Gramps API returns a list, extract first element
+                    if isinstance(data, list) and len(data) > 0:
+                        return data[0]
+                    return data
+                else:
+                    logger.error(f"Failed to create person: HTTP {response.status_code} - {response.text}")
+        except Exception as e:
+            logger.error(f"Error creating person: {e}")
+
+        return None
+
+    async def create_family(self, family_data: dict) -> Optional[dict]:
+        """
+        Create a new family in Gramps.
+
+        Args:
+            family_data: Family data following Gramps family schema
+
+        Returns:
+            Created family data with handle, or None if failed
+        """
+        if not self.base_url:
+            return None
+
+        token = await self._get_token()
+        if not token:
+            return None
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=self.timeout,
+                follow_redirects=True,
+            ) as client:
+                response = await client.post(
+                    f"{self.base_url}/api/families/",
+                    headers=self._get_headers(token),
+                    json=family_data,
+                )
+                if response.status_code in (200, 201):
+                    data = response.json()
+                    if isinstance(data, list) and len(data) > 0:
+                        return data[0]
+                    return data
+                else:
+                    logger.error(f"Failed to create family: HTTP {response.status_code} - {response.text}")
+        except Exception as e:
+            logger.error(f"Error creating family: {e}")
+
+        return None
+
+    async def create_event(self, event_data: dict) -> Optional[dict]:
+        """
+        Create a new event in Gramps.
+
+        Args:
+            event_data: Event data following Gramps event schema
+
+        Returns:
+            Created event data with handle, or None if failed
+        """
+        if not self.base_url:
+            return None
+
+        token = await self._get_token()
+        if not token:
+            return None
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=self.timeout,
+                follow_redirects=True,
+            ) as client:
+                response = await client.post(
+                    f"{self.base_url}/api/events/",
+                    headers=self._get_headers(token),
+                    json=event_data,
+                )
+                if response.status_code in (200, 201):
+                    data = response.json()
+                    if isinstance(data, list) and len(data) > 0:
+                        return data[0]
+                    return data
+                else:
+                    logger.error(f"Failed to create event: HTTP {response.status_code} - {response.text}")
+        except Exception as e:
+            logger.error(f"Error creating event: {e}")
+
+        return None
+
+    async def update_person(self, handle: str, person_data: dict) -> Optional[dict]:
+        """
+        Update an existing person in Gramps.
+
+        Args:
+            handle: Gramps handle for the person
+            person_data: Updated person data
+
+        Returns:
+            Updated person data, or None if failed
+        """
+        if not self.base_url:
+            return None
+
+        token = await self._get_token()
+        if not token:
+            return None
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=self.timeout,
+                follow_redirects=True,
+            ) as client:
+                response = await client.put(
+                    f"{self.base_url}/api/people/{handle}",
+                    headers=self._get_headers(token),
+                    json=person_data,
+                )
+                if response.status_code == 200:
+                    return response.json()
+                else:
+                    logger.error(f"Failed to update person: HTTP {response.status_code} - {response.text}")
+        except Exception as e:
+            logger.error(f"Error updating person: {e}")
+
+        return None
+
+    @staticmethod
+    def build_person_data(
+        first_name: str,
+        surname: str,
+        gender: int = 2,  # 0=female, 1=male, 2=unknown
+        suffix: str = "",
+        gramps_id: Optional[str] = None,
+    ) -> dict:
+        """
+        Build a person data structure for creating a new person.
+
+        Args:
+            first_name: First name
+            surname: Surname/family name
+            gender: 0=female, 1=male, 2=unknown
+            suffix: Name suffix (Jr., Sr., etc.)
+            gramps_id: Optional Gramps ID (auto-generated if not provided)
+
+        Returns:
+            Person data dictionary ready for create_person()
+        """
+        data = {
+            "gender": gender,
+            "primary_name": {
+                "first_name": first_name,
+                "surname_list": [
+                    {
+                        "surname": surname,
+                        "primary": True,
+                    }
+                ],
+                "suffix": suffix,
+                "type": "Birth Name",
+            },
+        }
+        if gramps_id:
+            data["gramps_id"] = gramps_id
+        return data
+
+    @staticmethod
+    def extract_person_name(person: dict) -> tuple[str, str]:
+        """
+        Extract first name and surname from a Gramps person object.
+
+        Args:
+            person: Gramps person dictionary
+
+        Returns:
+            Tuple of (first_name, surname)
+        """
+        name = person.get("primary_name", {})
+        first_name = name.get("first_name", "")
+        surnames = name.get("surname_list", [])
+        surname = surnames[0].get("surname", "") if surnames else ""
+        return first_name, surname
+
 
 # Singleton instance for dependency injection
 _connector: Optional[GrampsConnector] = None

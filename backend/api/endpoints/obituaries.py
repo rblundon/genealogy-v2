@@ -28,6 +28,17 @@ class ObituaryProcessRequest(BaseModel):
     url: HttpUrl
 
 
+class FactStatusUpdateRequest(BaseModel):
+    """Request model for updating fact resolution status."""
+    resolution_status: str  # 'resolved', 'rejected', 'unresolved', 'conflicting'
+
+
+class BulkFactStatusUpdateRequest(BaseModel):
+    """Request model for bulk updating fact resolution status."""
+    fact_ids: List[int]
+    resolution_status: str  # 'resolved', 'rejected', 'unresolved', 'conflicting'
+
+
 class FactResponse(BaseModel):
     """Response model for a single fact."""
     id: int
@@ -337,3 +348,80 @@ async def reprocess_obituary(
         obituary.fetch_error = str(e)
         db.commit()
         raise HTTPException(status_code=500, detail=f"Reprocessing failed: {str(e)}")
+
+
+@router.patch("/facts/{fact_id}/status")
+async def update_fact_status(
+    fact_id: int,
+    request: FactStatusUpdateRequest,
+    db: Session = Depends(get_db)
+) -> Dict:
+    """
+    Update the resolution status of a specific fact.
+
+    Valid statuses:
+    - 'resolved': Fact has been approved
+    - 'rejected': Fact has been rejected as incorrect
+    - 'unresolved': Fact needs review (default)
+    - 'conflicting': Fact conflicts with other data
+    """
+
+    valid_statuses = ['unresolved', 'resolved', 'conflicting', 'rejected']
+    if request.resolution_status not in valid_statuses:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status. Must be one of: {valid_statuses}"
+        )
+
+    fact = db.query(ExtractedFact).filter(ExtractedFact.id == fact_id).first()
+
+    if not fact:
+        raise HTTPException(status_code=404, detail=f"Fact {fact_id} not found")
+
+    old_status = fact.resolution_status
+    fact.resolution_status = request.resolution_status
+    db.commit()
+    db.refresh(fact)
+
+    logger.info(f"Updated fact {fact_id} status: {old_status} -> {request.resolution_status}")
+
+    return {
+        'id': fact_id,
+        'old_status': old_status,
+        'new_status': fact.resolution_status,
+        'fact': fact.to_dict()
+    }
+
+
+@router.patch("/facts/bulk-status")
+async def bulk_update_fact_status(
+    request: BulkFactStatusUpdateRequest,
+    db: Session = Depends(get_db)
+) -> Dict:
+    """
+    Update the resolution status of multiple facts at once.
+    """
+
+    valid_statuses = ['unresolved', 'resolved', 'conflicting', 'rejected']
+    if request.resolution_status not in valid_statuses:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status. Must be one of: {valid_statuses}"
+        )
+
+    updated_count = db.query(ExtractedFact).filter(
+        ExtractedFact.id.in_(request.fact_ids)
+    ).update(
+        {'resolution_status': request.resolution_status},
+        synchronize_session='fetch'
+    )
+
+    db.commit()
+
+    logger.info(f"Bulk updated {updated_count} facts to status: {request.resolution_status}")
+
+    return {
+        'updated_count': updated_count,
+        'requested_ids': request.fact_ids,
+        'new_status': request.resolution_status
+    }

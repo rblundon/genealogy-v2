@@ -113,6 +113,7 @@ class ExtractedFact(Base):
             'parent',
             'sibling',
             'grandchild',
+            'great_grandchild',
             'grandparent',
             'in_law',
             'other'

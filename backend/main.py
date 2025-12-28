@@ -85,6 +85,8 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",  # Vite dev server
         "http://localhost:3000",  # Alternative frontend port
+        "http://scrim.local.mk-labs.cloud:5173",  # Remote dev access
+        "http://scrim.local.mk-labs.cloud:3000",
     ],
     allow_credentials=True,
     allow_methods=["*"],
