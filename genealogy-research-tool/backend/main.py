@@ -9,9 +9,11 @@ from dotenv import load_dotenv
 # Load environment
 load_dotenv()
 
-from models import get_db, ObituaryCache, ExtractedFact
+from models import get_db, ObituaryCache, ExtractedFact, PersonCluster
 from services.llm_extractor import process_obituary_full
+from services.fact_clusterer import FactClusterer
 from utils.hash_utils import hash_url
+import json
 
 app = FastAPI(
     title="Genealogy Research Tool API",
@@ -102,12 +104,16 @@ async def root():
     """Root endpoint with API info"""
     return {
         "service": "Genealogy Research Tool API",
-        "version": "1.0.0",
-        "phase": "Phase 1 - Foundation",
+        "version": "2.0.0",
+        "phase": "Phase 2 - Cross-Obituary Clustering",
         "endpoints": {
             "/health": "Health check",
             "/api/obituaries/process": "Process an obituary (POST)",
-            "/api/obituaries/{id}/facts": "Get facts for an obituary (GET)"
+            "/api/obituaries/{id}/facts": "Get facts for an obituary (GET)",
+            "/api/clusters/generate": "Generate person clusters (POST)",
+            "/api/clusters": "List all clusters (GET)",
+            "/api/clusters/{id}": "Get cluster details (GET)",
+            "/api/clusters/{id}/corroboration": "Get corroboration info (GET)"
         }
     }
 
@@ -311,6 +317,154 @@ async def cross_obituary_analysis(db: Session = Depends(get_db)):
         ).count(),
         'total_facts': db.query(ExtractedFact).count()
     }
+
+# ============================================================================
+# CLUSTERING ENDPOINTS (Phase 2)
+# ============================================================================
+
+@app.post("/api/clusters/generate")
+async def generate_clusters(db: Session = Depends(get_db)):
+    """
+    Generate person clusters across all obituaries.
+
+    This performs fuzzy matching to identify name variants and
+    creates PersonCluster records linking facts about the same person.
+    """
+    clusterer = FactClusterer(db, fuzzy_threshold=0.85)
+
+    # Find cross-obituary clusters
+    clusters = clusterer.find_cross_obituary_clusters()
+
+    # Create database records
+    cluster_records = clusterer.create_person_cluster_records(clusters)
+
+    return {
+        'clusters_created': len(cluster_records),
+        'summary': {
+            'total_clusters': len(clusters),
+            'multi_source_clusters': sum(1 for c in clusters if c['obituary_count'] > 1),
+            'clusters_with_variants': sum(1 for c in clusters if len(c['name_variants']) > 1),
+            'total_facts_clustered': sum(c['fact_count'] for c in clusters)
+        },
+        'clusters': [
+            {
+                'cluster_id': rec.id,
+                'canonical_name': rec.canonical_name,
+                'name_variants': json.loads(rec.name_variants),
+                'source_count': rec.source_count,
+                'fact_count': rec.fact_count,
+                'confidence': float(rec.confidence_score) if rec.confidence_score else None
+            }
+            for rec in cluster_records[:20]  # First 20 clusters
+        ]
+    }
+
+
+@app.get("/api/clusters")
+async def list_clusters(
+    min_sources: int = 1,
+    db: Session = Depends(get_db)
+):
+    """
+    List all person clusters, optionally filtered by minimum source count.
+    """
+    query = db.query(PersonCluster)
+
+    if min_sources > 1:
+        query = query.filter(PersonCluster.source_count >= min_sources)
+
+    clusters = query.order_by(
+        PersonCluster.source_count.desc(),
+        PersonCluster.fact_count.desc()
+    ).all()
+
+    return {
+        'cluster_count': len(clusters),
+        'clusters': [
+            {
+                'cluster_id': c.id,
+                'canonical_name': c.canonical_name,
+                'name_variants': json.loads(c.name_variants),
+                'source_count': c.source_count,
+                'fact_count': c.fact_count,
+                'confidence': float(c.confidence_score) if c.confidence_score else None,
+                'cluster_status': c.cluster_status,
+                'gramps_person_id': c.gramps_person_id
+            }
+            for c in clusters
+        ]
+    }
+
+
+@app.get("/api/clusters/{cluster_id}")
+async def get_cluster_details(
+    cluster_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Get detailed information about a specific person cluster,
+    including all facts and sources.
+    """
+    clusterer = FactClusterer(db)
+
+    summary = clusterer.get_cluster_summary(cluster_id)
+
+    if not summary:
+        raise HTTPException(status_code=404, detail="Cluster not found")
+
+    # Add conflict detection
+    conflicts = clusterer.detect_conflicts(cluster_id)
+    summary['conflicts'] = conflicts
+
+    return summary
+
+
+@app.get("/api/clusters/{cluster_id}/corroboration")
+async def get_cluster_corroboration(
+    cluster_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Show multi-source corroboration for a person cluster.
+
+    Displays facts that appear in multiple obituaries,
+    which increases confidence.
+    """
+    clusterer = FactClusterer(db)
+    corroborated = clusterer.get_corroborated_facts(cluster_id)
+
+    return {
+        'cluster_id': cluster_id,
+        'corroborated_facts': corroborated,
+        'corroboration_summary': {
+            'total_corroborated_facts': len(corroborated),
+            'max_source_count': max((c['source_count'] for c in corroborated), default=0)
+        }
+    }
+
+
+@app.get("/api/matching/test")
+async def test_matching(
+    name1: str,
+    name2: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Test fuzzy matching between two names.
+
+    Useful for debugging and tuning match thresholds.
+    """
+    from services.person_matcher import PersonMatcher
+
+    matcher = PersonMatcher(fuzzy_threshold=0.85)
+    result = matcher.match_score(name1, name2)
+
+    return {
+        'name1': name1,
+        'name2': name2,
+        'match_result': result
+    }
+
 
 if __name__ == "__main__":
     import uvicorn
