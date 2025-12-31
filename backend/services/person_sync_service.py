@@ -138,10 +138,11 @@ class PersonSyncService:
     def get_all_persons(self) -> list[PersonSummary]:
         """
         Get all unique persons across all obituaries.
+        Includes both subject_name and related_name to capture all mentioned persons.
         Returns list sorted alphabetically by last name.
         """
         # Get distinct subject names with aggregated info
-        persons_query = self.db.query(
+        subjects_query = self.db.query(
             ExtractedFact.subject_name,
             ExtractedFact.subject_role,
             func.count(distinct(ExtractedFact.obituary_cache_id)).label('obituary_count'),
@@ -156,7 +157,44 @@ class PersonSyncService:
             ExtractedFact.subject_name
         ).all()
 
+        # Also get unique persons from related_name (e.g., spouses, deceased relatives)
+        # These are people mentioned in relationships who may not have their own facts
+        related_query = self.db.query(
+            ExtractedFact.related_name,
+            ExtractedFact.relationship_type,
+            func.count(distinct(ExtractedFact.obituary_cache_id)).label('obituary_count'),
+            func.count(ExtractedFact.id).label('fact_count'),
+        ).filter(
+            ExtractedFact.related_name.isnot(None),
+            ExtractedFact.related_name != ''
+        ).group_by(
+            ExtractedFact.related_name
+        ).all()
+
+        # Build a set of subject names for deduplication
+        subject_names = {row.subject_name for row in subjects_query}
+
+        # Convert related persons that aren't already subjects
+        related_persons = []
+        for row in related_query:
+            if row.related_name not in subject_names:
+                # Infer role from relationship_type
+                role = self._infer_role_from_relationship(row.relationship_type)
+                related_persons.append((
+                    row.related_name,
+                    role,
+                    row.obituary_count,
+                    row.fact_count,
+                    0,  # resolved_count
+                    0   # unresolved_count
+                ))
+
+        # Combine both lists
+        persons_query = list(subjects_query)
+
         results = []
+
+        # Process subject-based persons
         for row in persons_query:
             name = row.subject_name
             first, middle, last, suffix = parse_name(name)
@@ -191,6 +229,38 @@ class PersonSyncService:
                 sync_status=sync_status,
             ))
 
+        # Process related-only persons (those mentioned only in relationships)
+        for name, role, obit_count, fact_count, resolved, unresolved in related_persons:
+            first, middle, last, suffix = parse_name(name)
+
+            resolution = self.db.query(PersonResolution).filter(
+                PersonResolution.extracted_name == name,
+                PersonResolution.gramps_handle.isnot(None)
+            ).first()
+
+            gramps_handle = resolution.gramps_handle if resolution else None
+            gramps_id = resolution.gramps_id if resolution else None
+            sync_status = resolution.status if resolution else 'pending'
+
+            person_id = hash(name) & 0x7FFFFFFF
+
+            results.append(PersonSummary(
+                id=person_id,
+                name=name,
+                name_formatted=format_name_last_first(name),
+                first_name=first,
+                middle_name=middle,
+                last_name=last,
+                primary_role=role,
+                obituary_count=obit_count,
+                fact_count=fact_count,
+                resolved_count=resolved,
+                unresolved_count=unresolved,
+                gramps_handle=gramps_handle,
+                gramps_id=gramps_id,
+                sync_status=sync_status,
+            ))
+
         # Sort by last name, then first name
         results.sort(key=lambda x: (
             (x.last_name or '').lower(),
@@ -199,16 +269,53 @@ class PersonSyncService:
 
         return results
 
+    def _infer_role_from_relationship(self, relationship_type: Optional[str]) -> str:
+        """Infer person's role from relationship type."""
+        if not relationship_type:
+            return 'other'
+
+        role_map = {
+            'husband': 'spouse',
+            'wife': 'spouse',
+            'spouse': 'spouse',
+            'father': 'parent',
+            'mother': 'parent',
+            'son': 'child',
+            'daughter': 'child',
+            'brother': 'sibling',
+            'sister': 'sibling',
+            'grandfather': 'grandparent',
+            'grandmother': 'grandparent',
+            'grandson': 'grandchild',
+            'granddaughter': 'grandchild',
+            'great_grandfather': 'grandparent',
+            'great_grandmother': 'grandparent',
+            'brother_in_law': 'in_law',
+            'sister_in_law': 'in_law',
+            'son_in_law': 'in_law',
+            'daughter_in_law': 'in_law',
+        }
+        return role_map.get(relationship_type, 'other')
+
     def get_person_by_name(self, name: str) -> Optional[PersonDetail]:
         """
         Get detailed person info with facts grouped by obituary.
+        Includes facts where person is subject OR mentioned as related_name.
         """
-        # Get all facts for this person
-        facts = self.db.query(ExtractedFact).filter(
+        from models import ObituaryCache
+        from sqlalchemy import or_
+
+        # Get all facts where this person is subject
+        subject_facts = self.db.query(ExtractedFact).filter(
             ExtractedFact.subject_name == name
         ).all()
 
-        if not facts:
+        # Get all facts where this person is mentioned as related_name
+        related_facts = self.db.query(ExtractedFact).filter(
+            ExtractedFact.related_name == name
+        ).all()
+
+        if not subject_facts and not related_facts:
             return None
 
         first, middle, last, suffix = parse_name(name)
@@ -226,11 +333,23 @@ class PersonSyncService:
         # Group facts by obituary
         obituary_facts_map: dict[int, ObituaryFacts] = {}
 
-        for fact in facts:
+        # Track seen relationships to avoid duplicates
+        # Key: (obituary_id, related_name, relationship_type)
+        seen_relationships: set[tuple[int, str, str]] = set()
+
+        # Determine primary role from subject facts
+        primary_role = 'other'
+        if subject_facts:
+            primary_role = subject_facts[0].subject_role or 'other'
+        elif related_facts:
+            # Infer role from relationship
+            rel_type = related_facts[0].relationship_type
+            primary_role = self._infer_role_from_relationship(rel_type)
+
+        # Process facts where person is subject
+        for fact in subject_facts:
             obit_id = fact.obituary_cache_id
             if obit_id not in obituary_facts_map:
-                # Get obituary URL
-                from models import ObituaryCache
                 obit = self.db.query(ObituaryCache).filter(
                     ObituaryCache.id == obit_id
                 ).first()
@@ -238,11 +357,72 @@ class PersonSyncService:
                 obituary_facts_map[obit_id] = ObituaryFacts(
                     obituary_id=obit_id,
                     obituary_url=obit.url if obit else '',
-                    role=fact.subject_role,
+                    role=fact.subject_role or primary_role,
                     facts=[]
                 )
 
-            obituary_facts_map[obit_id].facts.append(fact.to_dict())
+            # For relationship facts, reverse the type to show subject's role
+            # e.g., Maxine→daughter→Patricia means "Patricia is Maxine's daughter"
+            # Display as: "mother of Patricia" (Maxine is mother of Patricia)
+            if fact.fact_type == 'relationship' and fact.relationship_type:
+                fact_dict = fact.to_dict()
+                reversed_type = self._reverse_relationship(fact.relationship_type)
+                fact_dict['fact_value'] = reversed_type
+                fact_dict['relationship_type'] = reversed_type
+
+                # Track this relationship to avoid duplicates from derived facts
+                rel_key = (obit_id, fact.related_name or '', reversed_type)
+                if rel_key not in seen_relationships:
+                    seen_relationships.add(rel_key)
+                    obituary_facts_map[obit_id].facts.append(fact_dict)
+            else:
+                obituary_facts_map[obit_id].facts.append(fact.to_dict())
+
+        # Process facts where person is mentioned in relationship
+        for fact in related_facts:
+            obit_id = fact.obituary_cache_id
+            if obit_id not in obituary_facts_map:
+                obit = self.db.query(ObituaryCache).filter(
+                    ObituaryCache.id == obit_id
+                ).first()
+
+                obituary_facts_map[obit_id] = ObituaryFacts(
+                    obituary_id=obit_id,
+                    obituary_url=obit.url if obit else '',
+                    role=self._infer_role_from_relationship(fact.relationship_type),
+                    facts=[]
+                )
+
+            # Create a derived fact representation for the related person
+            # relationship_type describes what SUBJECT is to RELATED
+            # e.g., Ryan→wife→Amy means "Amy is wife of Ryan"
+            # For Amy's view: subject=Amy, relationship_type=wife, related=Ryan
+            # This displays as "wife of Ryan" (Amy is wife of Ryan)
+
+            # Check if we already have this relationship from direct facts
+            rel_key = (obit_id, fact.subject_name or '', fact.relationship_type or '')
+            if rel_key in seen_relationships:
+                # Skip duplicate relationship
+                continue
+
+            seen_relationships.add(rel_key)
+
+            derived_fact = {
+                'id': fact.id,
+                'obituary_cache_id': obit_id,
+                'fact_type': 'relationship',
+                'subject_name': name,
+                'subject_role': self._infer_role_from_relationship(fact.relationship_type),
+                'fact_value': fact.relationship_type,  # Keep original - describes what subject IS
+                'related_name': fact.subject_name,
+                'relationship_type': fact.relationship_type,  # Keep original - describes what subject IS
+                'extracted_context': fact.extracted_context,
+                'is_inferred': True,
+                'inference_basis': f'Derived from: {fact.subject_name} has {fact.relationship_type} {name}',
+                'confidence_score': fact.confidence_score,
+                'resolution_status': fact.resolution_status,
+            }
+            obituary_facts_map[obit_id].facts.append(derived_fact)
 
         person_id = hash(name) & 0x7FFFFFFF
 
@@ -258,6 +438,61 @@ class PersonSyncService:
             sync_status=sync_status,
             obituary_facts=list(obituary_facts_map.values())
         )
+
+    def _reverse_relationship(self, relationship_type: Optional[str]) -> str:
+        """
+        Get the reverse of a relationship type.
+
+        Given what B is to A, returns what A is to B.
+        e.g., if B is 'daughter' of A, then A is 'parent' of B.
+        """
+        if not relationship_type:
+            return 'related'
+
+        reverse_map = {
+            # Spouse relationships
+            'husband': 'wife',
+            'wife': 'husband',
+            'spouse': 'spouse',
+            # Parent/child relationships
+            'father': 'child',
+            'mother': 'child',
+            'parent': 'child',
+            'son': 'parent',
+            'daughter': 'parent',
+            'child': 'parent',
+            # Sibling relationships
+            'brother': 'sibling',
+            'sister': 'sibling',
+            'sibling': 'sibling',
+            # Grandparent/grandchild relationships
+            'grandfather': 'grandchild',
+            'grandmother': 'grandchild',
+            'grandparent': 'grandchild',
+            'grandson': 'grandparent',
+            'granddaughter': 'grandparent',
+            'grandchild': 'grandparent',
+            # Great-grandparent relationships
+            'great_grandfather': 'great_grandchild',
+            'great_grandmother': 'great_grandchild',
+            'great_grandparent': 'great_grandchild',
+            'great_grandchild': 'great_grandparent',
+            # In-law relationships
+            'son-in-law': 'parent-in-law',
+            'daughter-in-law': 'parent-in-law',
+            'son_in_law': 'parent-in-law',
+            'daughter_in_law': 'parent-in-law',
+            'father-in-law': 'child-in-law',
+            'mother-in-law': 'child-in-law',
+            'brother-in-law': 'sibling-in-law',
+            'sister-in-law': 'sibling-in-law',
+            # Aunt/uncle/niece/nephew
+            'uncle': 'nephew/niece',
+            'aunt': 'nephew/niece',
+            'nephew': 'uncle/aunt',
+            'niece': 'uncle/aunt',
+        }
+        return reverse_map.get(relationship_type, relationship_type)
 
     async def get_gramps_matches(self, name: str) -> list[GrampsMatch]:
         """

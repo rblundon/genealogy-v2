@@ -10,7 +10,9 @@ from .cache_models import (
     AuditLog,
     PersonResolution,
     FactResolution,
-    GrampsCommitBatch
+    GrampsCommitBatch,
+    Person,
+    ExtractionPass
 )
 
 __all__ = [
@@ -27,5 +29,7 @@ __all__ = [
     'AuditLog',
     'PersonResolution',
     'FactResolution',
-    'GrampsCommitBatch'
+    'GrampsCommitBatch',
+    'Person',
+    'ExtractionPass'
 ]

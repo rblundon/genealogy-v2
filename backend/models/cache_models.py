@@ -65,6 +65,10 @@ class LLMCache(Base):
     duration_ms = Column(Integer)
     api_error = Column(Text)
 
+    # Multi-pass extraction support
+    pass_number = Column(Integer, index=True)  # 1, 2, or 3 for multi-pass; NULL for legacy single-pass
+    pass_input_hash = Column(String(64))  # Hash of input from previous passes
+
     # Relationships
     obituary = relationship("ObituaryCache", back_populates="llm_cache_entries")
 
@@ -73,7 +77,7 @@ class LLMCache(Base):
     )
 
     def __repr__(self):
-        return f"<LLMCache(id={self.id}, provider='{self.llm_provider}', model='{self.model_version}')>"
+        return f"<LLMCache(id={self.id}, provider='{self.llm_provider}', model='{self.model_version}', pass={self.pass_number})>"
 
 
 class ExtractedFact(Base):
@@ -92,6 +96,7 @@ class ExtractedFact(Base):
             'person_birth_date',
             'person_gender',
             'maiden_name',
+            'married_name',
             'relationship',
             'marriage',
             'location_birth',
@@ -146,6 +151,11 @@ class ExtractedFact(Base):
     resolution_notes = Column(Text)
     resolved_timestamp = Column(TIMESTAMP)
 
+    # Multi-pass extraction support - link to canonical Person records
+    person_id = Column(Integer, ForeignKey('persons.id', ondelete='SET NULL'), index=True)
+    related_person_id = Column(Integer, ForeignKey('persons.id', ondelete='SET NULL'), index=True)
+    extraction_pass_id = Column(Integer, ForeignKey('extraction_pass.id', ondelete='SET NULL'), index=True)
+
     created_timestamp = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_timestamp = Column(TIMESTAMP, server_default=func.current_timestamp(),
                               onupdate=func.current_timestamp())
@@ -154,6 +164,9 @@ class ExtractedFact(Base):
     obituary = relationship("ObituaryCache", back_populates="extracted_facts")
     llm_cache = relationship("LLMCache")
     gramps_mappings = relationship("GrampsRecordMapping", back_populates="extracted_fact")
+    person = relationship("Person", foreign_keys=[person_id])
+    related_person = relationship("Person", foreign_keys=[related_person_id])
+    extraction_pass = relationship("ExtractionPass")
 
     def __repr__(self):
         return (f"<ExtractedFact(id={self.id}, type='{self.fact_type}', "
@@ -441,3 +454,121 @@ class GrampsCommitBatch(Base):
 
     def __repr__(self):
         return f"<GrampsCommitBatch(id={self.id}, status='{self.status}')>"
+
+
+class Person(Base):
+    """
+    Canonical person record across all obituaries.
+
+    This is the single source of truth for person identity.
+    A person may appear in multiple obituaries with different roles,
+    but this record captures their stable attributes.
+
+    IMPORTANT: is_deceased is IMMUTABLE once set to True.
+    Once someone is marked as deceased, they cannot be unmarked.
+    """
+    __tablename__ = 'persons'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # Name fields
+    full_name = Column(String(255), nullable=False, index=True)
+    first_name = Column(String(100))
+    middle_name = Column(String(100))
+    last_name = Column(String(100), index=True)
+    suffix = Column(String(20))
+    maiden_name = Column(String(100))
+
+    # Deceased tracking (IMMUTABLE - once TRUE, never FALSE)
+    is_deceased = Column(Boolean, default=False, index=True)
+    deceased_date = Column(DATE)
+    deceased_source_obituary_id = Column(Integer, ForeignKey('obituary_cache.id', ondelete='SET NULL'))
+
+    # Link to their own obituary (if they are the primary deceased)
+    primary_obituary_id = Column(Integer, ForeignKey('obituary_cache.id', ondelete='SET NULL'), index=True)
+
+    # Gender
+    gender = Column(Enum('male', 'female', 'unknown'), default='unknown')
+
+    # Gramps sync
+    gramps_handle = Column(String(64), index=True)
+    gramps_id = Column(String(20))
+    sync_status = Column(
+        Enum('pending', 'matched', 'created', 'committed', 'rejected'),
+        default='pending',
+        index=True
+    )
+
+    # Timestamps
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(),
+                       onupdate=func.current_timestamp())
+
+    # Relationships
+    primary_obituary = relationship("ObituaryCache", foreign_keys=[primary_obituary_id])
+    deceased_source_obituary = relationship("ObituaryCache", foreign_keys=[deceased_source_obituary_id])
+
+    def __repr__(self):
+        return f"<Person(id={self.id}, name='{self.full_name}', deceased={self.is_deceased})>"
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'full_name': self.full_name,
+            'first_name': self.first_name,
+            'middle_name': self.middle_name,
+            'last_name': self.last_name,
+            'suffix': self.suffix,
+            'maiden_name': self.maiden_name,
+            'is_deceased': self.is_deceased,
+            'deceased_date': self.deceased_date.isoformat() if self.deceased_date else None,
+            'primary_obituary_id': self.primary_obituary_id,
+            'gender': self.gender,
+            'gramps_handle': self.gramps_handle,
+            'gramps_id': self.gramps_id,
+            'sync_status': self.sync_status,
+        }
+
+
+class ExtractionPass(Base):
+    """
+    Tracks individual LLM extraction passes for an obituary.
+
+    The multi-pass extraction pipeline uses 3 passes:
+    - Pass 1: Person identification
+    - Pass 2: Direct relationships + gender inference
+    - Pass 3: Inferred relationships
+    """
+    __tablename__ = 'extraction_pass'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    obituary_cache_id = Column(Integer, ForeignKey('obituary_cache.id', ondelete='CASCADE'), nullable=False)
+    pass_number = Column(Integer, nullable=False)  # 1, 2, or 3
+    llm_cache_id = Column(Integer, ForeignKey('llm_cache.id', ondelete='SET NULL'))
+
+    status = Column(
+        Enum('pending', 'running', 'completed', 'failed'),
+        default='pending',
+        index=True
+    )
+    error_message = Column(Text)
+
+    # Hash of input/output for cache validation
+    input_hash = Column(String(64))
+    output_hash = Column(String(64))
+
+    # Timestamps
+    created_timestamp = Column(TIMESTAMP, server_default=func.current_timestamp())
+    completed_timestamp = Column(TIMESTAMP)
+
+    # Relationships
+    obituary = relationship("ObituaryCache")
+    llm_cache = relationship("LLMCache")
+
+    __table_args__ = (
+        Index('idx_obituary_pass', 'obituary_cache_id', 'pass_number'),
+        Index('unique_obituary_pass', 'obituary_cache_id', 'pass_number', unique=True),
+    )
+
+    def __repr__(self):
+        return f"<ExtractionPass(id={self.id}, obituary={self.obituary_cache_id}, pass={self.pass_number}, status='{self.status}')>"

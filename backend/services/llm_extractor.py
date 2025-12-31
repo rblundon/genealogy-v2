@@ -35,7 +35,7 @@ OBITUARY CONVENTIONS TO UNDERSTAND:
 10. When only first name given for spouse (e.g., "son Robert (Amy)"), Amy is Robert's wife
 
 FACT TYPES:
-- person_name: Full name of a person mentioned
+- person_name: Full name of a person mentioned (EXTRACT FOR EVERY PERSON)
 - person_death_date: Date of death
 - person_death_age: Age at death
 - person_birth_date: Date of birth
@@ -46,13 +46,25 @@ FACT TYPES:
 - survived_by: Someone who survived the primary deceased
 - location_birth, location_death, location_residence: Places
 
+CRITICAL - EXTRACT person_name FOR EVERYONE INCLUDING:
+- The primary deceased person
+- Spouses (current and former, living and deceased)
+- All children, grandchildren, great-grandchildren
+- Parents and siblings
+- In-laws (children's spouses, spouse's siblings)
+- Anyone in "preceded in death" or "survived by" lists
+
 For each fact, provide:
 - fact_type: One of the types above
 - subject_name: Who this fact is about (use full name with surname if known)
 - subject_role: deceased_primary, spouse, child, parent, sibling, grandchild, great_grandchild, in_law, other
 - fact_value: The value/content of this fact
 - related_name: (for relationships) the other person's full name
-- relationship_type: spouse, father, mother, son, daughter, brother, sister, grandfather, grandmother, grandson, granddaughter, great_grandfather, great_grandmother, brother_in_law, sister_in_law, husband, wife, etc.
+- relationship_type: DESCRIBES WHAT RELATED_NAME IS TO SUBJECT_NAME (not vice versa):
+    Example: subject=Maxine, related=Patricia, type=daughter → Patricia IS Maxine's daughter
+    Use: son, daughter, father, mother, brother, sister, husband, wife,
+         grandfather, grandmother, grandson, granddaughter,
+         great_grandson, great_granddaughter, brother_in_law, sister_in_law
 - extracted_context: The exact phrase from obituary supporting this fact
 - is_inferred: true if you had to infer this (not explicitly stated)
 - inference_basis: (if inferred) brief explanation of your reasoning
@@ -501,11 +513,226 @@ async def extract_facts_from_obituary(
 
     logger.info(f"Stored {len(extracted_facts)} facts in database")
 
+    # Post-process: ensure person_name facts exist for all related people
+    ensure_person_names_for_related(db, obituary_cache_id, extracted_facts)
+
+    # Post-process: infer gender and fix gendered relationship terms
+    infer_gender_and_fix_relationships(db, obituary_cache_id, extracted_facts)
+
     # Post-process to derive additional relationships
     derived_facts = derive_relationships(db, obituary_cache_id, extracted_facts)
     extracted_facts.extend(derived_facts)
 
     return extracted_facts
+
+
+def ensure_person_names_for_related(
+    db: Session,
+    obituary_cache_id: int,
+    existing_facts: List[ExtractedFact]
+) -> None:
+    """
+    Ensure person_name facts exist for all people mentioned in relationships.
+
+    This catches people who are only mentioned as related_name (e.g., deceased spouses)
+    and creates person_name facts for them so they appear in the persons list.
+    """
+    # Get all subject names that have person_name facts
+    existing_names = {
+        f.subject_name for f in existing_facts
+        if f.fact_type == 'person_name'
+    }
+
+    # Find all related_names that don't have person_name facts
+    related_names_to_add = set()
+    related_roles = {}  # name -> role
+
+    for fact in existing_facts:
+        if fact.related_name and fact.related_name not in existing_names:
+            related_names_to_add.add(fact.related_name)
+            # Infer role from relationship type
+            if fact.relationship_type:
+                role = _infer_role_from_relationship_type(fact.relationship_type)
+                if fact.related_name not in related_roles or role != 'other':
+                    related_roles[fact.related_name] = role
+
+    # Create person_name facts for missing people
+    for name in related_names_to_add:
+        role = related_roles.get(name, 'other')
+        person_fact = ExtractedFact(
+            obituary_cache_id=obituary_cache_id,
+            fact_type='person_name',
+            subject_name=name,
+            subject_role=role,
+            fact_value=name,
+            extracted_context="Mentioned in relationship",
+            is_inferred=True,
+            inference_basis="Person mentioned as related_name in relationship fact",
+            confidence_score=0.95
+        )
+        db.add(person_fact)
+        existing_facts.append(person_fact)
+        logger.info(f"Created person_name fact for {name} (role: {role})")
+
+    if related_names_to_add:
+        db.commit()
+        logger.info(f"Added {len(related_names_to_add)} person_name facts for related people")
+
+
+def _infer_role_from_relationship_type(relationship_type: str) -> str:
+    """Infer person's role from relationship type."""
+    role_map = {
+        'husband': 'spouse',
+        'wife': 'spouse',
+        'spouse': 'spouse',
+        'father': 'parent',
+        'mother': 'parent',
+        'son': 'child',
+        'daughter': 'child',
+        'brother': 'sibling',
+        'sister': 'sibling',
+        'grandfather': 'grandparent',
+        'grandmother': 'grandparent',
+        'grandson': 'grandchild',
+        'granddaughter': 'grandchild',
+        'great_grandfather': 'grandparent',
+        'great_grandmother': 'grandparent',
+        'great_grandson': 'great_grandchild',
+        'great_granddaughter': 'great_grandchild',
+        'brother_in_law': 'in_law',
+        'sister_in_law': 'in_law',
+        'son_in_law': 'in_law',
+        'daughter_in_law': 'in_law',
+    }
+    return role_map.get(relationship_type, 'other')
+
+
+def infer_gender_and_fix_relationships(
+    db: Session,
+    obituary_cache_id: int,
+    existing_facts: List[ExtractedFact]
+) -> None:
+    """
+    Infer gender from spouse relationships and fix gendered relationship terms.
+
+    Gender inference rules:
+    - If person has a "husband" → person is female
+    - If person has a "wife" → person is male
+    - Pronouns "her" before husband/wife also indicate gender
+
+    Then fix relationship terms to match gender:
+    - Female: grandfather→grandmother, brother→sister
+    - Male: grandmother→grandfather, sister→brother
+    """
+    # Build lookup by subject
+    facts_by_subject: dict[str, list[ExtractedFact]] = {}
+    for fact in existing_facts:
+        if fact.subject_name not in facts_by_subject:
+            facts_by_subject[fact.subject_name] = []
+        facts_by_subject[fact.subject_name].append(fact)
+
+    # Track inferred genders
+    inferred_genders: dict[str, str] = {}
+
+    # First pass: Check for existing gender facts
+    for fact in existing_facts:
+        if fact.fact_type == 'person_gender':
+            inferred_genders[fact.subject_name] = fact.fact_value.lower()
+
+    # Second pass: Infer gender from spouse relationships
+    for fact in existing_facts:
+        if fact.subject_name in inferred_genders:
+            continue
+
+        # Check preceded_in_death and relationship facts for spouse info
+        if fact.fact_type in ('preceded_in_death', 'relationship'):
+            if fact.relationship_type == 'husband':
+                # Subject has a husband → subject is female
+                inferred_genders[fact.subject_name] = 'female'
+                logger.info(f"Inferred gender for {fact.subject_name}: female (has husband)")
+            elif fact.relationship_type == 'wife':
+                # Subject has a wife → subject is male
+                inferred_genders[fact.subject_name] = 'male'
+                logger.info(f"Inferred gender for {fact.subject_name}: male (has wife)")
+            elif fact.relationship_type == 'spouse' and fact.extracted_context:
+                # Check context for "her husband" or "his wife"
+                ctx = fact.extracted_context.lower()
+                if 'her husband' in ctx or 'her beloved husband' in ctx:
+                    inferred_genders[fact.subject_name] = 'female'
+                    logger.info(f"Inferred gender for {fact.subject_name}: female (from 'her husband' context)")
+                elif 'his wife' in ctx or 'his beloved wife' in ctx:
+                    inferred_genders[fact.subject_name] = 'male'
+                    logger.info(f"Inferred gender for {fact.subject_name}: male (from 'his wife' context)")
+
+    # Also check maiden_name - having a maiden name implies female
+    for fact in existing_facts:
+        if fact.fact_type == 'maiden_name' and fact.subject_name not in inferred_genders:
+            inferred_genders[fact.subject_name] = 'female'
+            logger.info(f"Inferred gender for {fact.subject_name}: female (has maiden name)")
+
+    # Create gender facts for inferred genders that don't have explicit facts
+    for subject_name, gender in inferred_genders.items():
+        has_gender_fact = any(
+            f.fact_type == 'person_gender' and f.subject_name == subject_name
+            for f in existing_facts
+        )
+        if not has_gender_fact:
+            # Find the subject_role from existing facts
+            subject_role = 'other'
+            for f in facts_by_subject.get(subject_name, []):
+                if f.subject_role:
+                    subject_role = f.subject_role
+                    break
+
+            gender_fact = ExtractedFact(
+                obituary_cache_id=obituary_cache_id,
+                fact_type='person_gender',
+                subject_name=subject_name,
+                subject_role=subject_role,
+                fact_value=gender,
+                extracted_context="Inferred from spouse relationship",
+                is_inferred=True,
+                inference_basis=f"Gender inferred from having a {'husband' if gender == 'female' else 'wife'}",
+                confidence_score=1.0
+            )
+            db.add(gender_fact)
+            existing_facts.append(gender_fact)
+            logger.info(f"Created gender fact for {subject_name}: {gender}")
+
+    # Third pass: Fix gendered relationship terms based on inferred gender
+    # Only fix terms that describe the SUBJECT's role, not the related person's role
+    # e.g., grandfather→grandmother (subject's role), but NOT daughter→son (related's role)
+    gender_relationship_fixes = {
+        # Female subject fixes - terms describing subject's role
+        ('grandfather', 'female'): 'grandmother',
+        ('brother', 'female'): 'sister',
+        ('great_grandfather', 'female'): 'great_grandmother',
+        ('father', 'female'): 'mother',
+        ('uncle', 'female'): 'aunt',
+        ('nephew', 'female'): 'niece',
+        # Male subject fixes - terms describing subject's role
+        ('grandmother', 'male'): 'grandfather',
+        ('sister', 'male'): 'brother',
+        ('great_grandmother', 'male'): 'great_grandfather',
+        ('mother', 'male'): 'father',
+        ('aunt', 'male'): 'uncle',
+        ('niece', 'male'): 'nephew',
+    }
+
+    for fact in existing_facts:
+        if fact.fact_type == 'relationship' and fact.relationship_type:
+            subject_gender = inferred_genders.get(fact.subject_name)
+            if subject_gender:
+                key = (fact.relationship_type, subject_gender)
+                if key in gender_relationship_fixes:
+                    old_type = fact.relationship_type
+                    new_type = gender_relationship_fixes[key]
+                    fact.relationship_type = new_type
+                    fact.fact_value = new_type
+                    logger.info(f"Fixed relationship for {fact.subject_name}: {old_type} → {new_type} (gender: {subject_gender})")
+
+    db.commit()
+    logger.info(f"Gender inference complete. Inferred genders for {len(inferred_genders)} persons")
 
 
 def derive_relationships(
@@ -545,29 +772,27 @@ def derive_relationships(
         if fact.relationship_type == 'spouse' and fact.related_name:
             spouses[fact.subject_name] = fact.related_name
 
-    # Find the primary deceased
+    # Find the primary deceased and their gender
     primary_deceased = None
+    primary_deceased_gender = None
     for fact in facts_by_type.get('person_name', []):
         if fact.subject_role == 'deceased_primary':
             primary_deceased = fact.subject_name
             break
 
-    # 0. Fix incorrect relationship directions
-    # relationship_type should describe what SUBJECT is to RELATED
-    # e.g., if Patricia -> Terrence and Terrence is Patricia's father,
-    # then Patricia IS daughter OF Terrence, so relationship_type = "daughter"
+    # Check for gender of primary deceased
+    for fact in facts_by_type.get('person_gender', []):
+        if fact.subject_name == primary_deceased:
+            primary_deceased_gender = fact.fact_value.lower()
+            break
 
-    relationship_fixes = {
-        # subject_role -> (wrong_type, correct_type)
-        'deceased_primary': {
-            'great_grandchild': 'great_grandfather',
-            'grandchild': 'grandfather',
-            'grandson': 'grandfather',
-            'granddaughter': 'grandmother',
-            'child': 'father',
-            'wife': 'husband',
-        },
-        # When child points to deceased_primary with "father", child IS daughter/son
+    # 0. Fix incorrect relationship directions (gender-aware)
+    # relationship_type should describe what SUBJECT is to RELATED
+    # e.g., if Maxine (female) -> Ryan and relationship is "grandchild",
+    # then Maxine IS grandmother OF Ryan
+
+    # Gender-neutral fixes (apply regardless of gender)
+    neutral_fixes = {
         'child': {
             'father': 'daughter',  # If child -> parent with "father", child is daughter
             'mother': 'daughter',
@@ -578,14 +803,54 @@ def derive_relationships(
         },
     }
 
+    # Gender-specific fixes for deceased_primary
+    # Maps: (relationship_type, gender) -> correct_type
+    #
+    # NOTE: relationship_type should describe what RELATED person is to SUBJECT
+    # e.g., "daughter" means related IS subject's daughter (correct, don't change)
+    # But sometimes LLM outputs what SUBJECT is to RELATED (e.g., "grandfather")
+    # which needs gender-based correction
+    #
+    # We only fix terms that describe SUBJECT's role (grandfather, brother, etc.)
+    # We do NOT fix terms that describe RELATED's role (daughter, son, grandchild)
+    gendered_deceased_fixes = {
+        # Female deceased - fix terms where LLM described subject's role incorrectly
+        ('grandfather', 'female'): 'grandmother',
+        ('great_grandfather', 'female'): 'great_grandmother',
+        ('brother', 'female'): 'sister',
+        ('sibling', 'female'): 'sister',
+        ('father', 'female'): 'mother',  # If LLM said subject IS father, fix to mother
+        ('uncle', 'female'): 'aunt',
+        # Male deceased
+        ('grandmother', 'male'): 'grandfather',
+        ('great_grandmother', 'male'): 'great_grandfather',
+        ('sister', 'male'): 'brother',
+        ('sibling', 'male'): 'brother',
+        ('mother', 'male'): 'father',  # If LLM said subject IS mother, fix to father
+        ('aunt', 'male'): 'uncle',
+    }
+
     for fact in existing_facts:
-        if fact.fact_type == 'relationship' and fact.subject_role in relationship_fixes:
-            fixes = relationship_fixes[fact.subject_role]
+        if fact.fact_type != 'relationship':
+            continue
+
+        # Apply neutral fixes first
+        if fact.subject_role in neutral_fixes:
+            fixes = neutral_fixes[fact.subject_role]
             if fact.relationship_type in fixes:
                 old_type = fact.relationship_type
                 fact.relationship_type = fixes[fact.relationship_type]
                 fact.fact_value = fact.relationship_type
                 logger.info(f"Fixed relationship type: {old_type} -> {fact.relationship_type}")
+
+        # Apply gender-specific fixes for deceased_primary
+        if fact.subject_role == 'deceased_primary' and primary_deceased_gender:
+            key = (fact.relationship_type, primary_deceased_gender)
+            if key in gendered_deceased_fixes:
+                old_type = fact.relationship_type
+                fact.relationship_type = gendered_deceased_fixes[key]
+                fact.fact_value = fact.relationship_type
+                logger.info(f"Fixed relationship type (gender-aware): {old_type} -> {fact.relationship_type} (subject is {primary_deceased_gender})")
 
     # 1. Derive parent-child from preceded_in_death
     for fact in facts_by_type.get('preceded_in_death', []):

@@ -350,6 +350,119 @@ async def reprocess_obituary(
         raise HTTPException(status_code=500, detail=f"Reprocessing failed: {str(e)}")
 
 
+@router.post("/reprocess-multipass/{obituary_id}")
+async def reprocess_obituary_multipass(
+    obituary_id: int,
+    force: bool = False,
+    db: Session = Depends(get_db)
+) -> Dict:
+    """
+    Reprocess an obituary using the new multi-pass extraction pipeline.
+
+    This uses 3 focused LLM passes:
+    - Pass 1: Person identification
+    - Pass 2: Direct relationships + gender inference
+    - Pass 3: Inferred relationships
+
+    Args:
+        obituary_id: ID of the obituary to process
+        force: If True, ignore cached results and re-run all passes
+    """
+    from services.multi_pass_extractor import MultiPassExtractor
+    from models import Person, ExtractionPass
+
+    obituary = db.query(ObituaryCache).filter(
+        ObituaryCache.id == obituary_id
+    ).first()
+
+    if not obituary:
+        raise HTTPException(status_code=404, detail=f"Obituary {obituary_id} not found")
+
+    if not obituary.extracted_text:
+        raise HTTPException(status_code=400, detail="Obituary has no extracted text")
+
+    # Update status
+    obituary.processing_status = 'processing'
+    db.commit()
+
+    try:
+        extractor = MultiPassExtractor(db)
+        result = await extractor.extract_all(
+            obituary_cache_id=obituary.id,
+            obituary_text=obituary.extracted_text,
+            force_reprocess=force
+        )
+
+        obituary.processing_status = 'completed'
+        db.commit()
+
+        # Build response
+        return {
+            'obituary_id': obituary_id,
+            'pass1': {
+                'primary_deceased': result.pass1.primary_deceased.full_name if result.pass1.primary_deceased else None,
+                'persons_count': len(result.pass1.all_persons()),
+                'persons': [
+                    {
+                        'name': p.full_name,
+                        'surname': p.surname,
+                        'is_primary': p.is_primary_deceased
+                    }
+                    for p in result.pass1.all_persons()
+                ]
+            },
+            'pass2': {
+                'relationships_count': len(result.pass2.relationships),
+                'relationships': [
+                    {
+                        'person_a': r.person_a,
+                        'person_b': r.person_b,
+                        'type': r.relationship_type,
+                        'context': r.source_context
+                    }
+                    for r in result.pass2.relationships
+                ],
+                'gender_facts': [
+                    {'person': g.person, 'gender': g.gender}
+                    for g in result.pass2.gender_facts
+                ],
+                'deceased': [d.person for d in result.pass2.deceased_status]
+            },
+            'pass3': {
+                'inferred_relationships_count': len(result.pass3.inferred_relationships),
+                'inferred_relationships': [
+                    {
+                        'person_a': r.person_a,
+                        'person_b': r.person_b,
+                        'type': r.relationship_type,
+                        'basis': r.inference_basis,
+                        'confidence': r.confidence_score
+                    }
+                    for r in result.pass3.inferred_relationships
+                ],
+                'inferred_facts': [
+                    {
+                        'person': f.person,
+                        'type': f.fact_type,
+                        'value': f.fact_value
+                    }
+                    for f in result.pass3.inferred_facts
+                ]
+            },
+            'summary': {
+                'persons_created': len(result.persons_created),
+                'facts_created': len(result.facts_created)
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Multi-pass extraction failed: {e}", exc_info=True)
+        obituary.processing_status = 'failed'
+        obituary.fetch_error = str(e)
+        db.commit()
+        raise HTTPException(status_code=500, detail=f"Multi-pass extraction failed: {str(e)}")
+
+
 @router.patch("/facts/{fact_id}/status")
 async def update_fact_status(
     fact_id: int,

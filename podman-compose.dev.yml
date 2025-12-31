@@ -18,6 +18,7 @@ services:
       - mariadb_data:/var/lib/mysql
       - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
       - ./database/migrations/003_fact_based_schema.sql:/docker-entrypoint-initdb.d/02-facts.sql:ro
+      - ./database/migrations/004_resolution_workflow.sql:/docker-entrypoint-initdb.d/03-resolution.sql:ro
     networks:
       - genealogy-net
     healthcheck:
