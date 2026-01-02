@@ -32,6 +32,31 @@ app.add_middleware(
 
 
 # ============================================================================
+# ADMIN ENDPOINTS
+# ============================================================================
+
+@app.delete("/api/admin/reset-database")
+async def reset_database(db: Session = Depends(get_db)):
+    """Complete database reset - clears all data"""
+    from models import LLMCache
+
+    counts = {
+        'obituaries': db.query(ObituaryCache).count(),
+        'llm_cache': db.query(LLMCache).count(),
+        'facts': db.query(ExtractedFact).count(),
+        'clusters': db.query(PersonCluster).count()
+    }
+
+    db.query(LLMCache).delete()
+    db.query(ExtractedFact).delete()
+    db.query(PersonCluster).delete()
+    db.query(ObituaryCache).delete()
+    db.commit()
+
+    return {'status': 'success', 'deleted': counts}
+
+
+# ============================================================================
 # MODELS
 # ============================================================================
 

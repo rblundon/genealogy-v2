@@ -142,12 +142,37 @@ Now extract ALL facts about these people. For each fact, provide:
 - subject_name: Full name of who this fact is about
 - subject_role: Role from person list above
 - fact_value: The value of this fact
-- related_name: (for relationships) the other person's name
-- relationship_type: (for relationships) spouse, parent, child, son, daughter, brother, sister, etc.
+- related_name: (for relationships) OTHER person's FULL NAME
+- relationship_type: More specific (son, daughter, wife, husband, grandson, etc.)
 - extracted_context: Exact phrase from obituary supporting this fact
 - is_inferred: true if inferred (not explicitly stated), false otherwise
 - inference_basis: (if inferred) brief explanation
 - confidence_score: 0.00 to 1.00
+
+**RELATIONSHIP FACT STRUCTURE (CRITICAL):**
+For relationship and marriage facts, you MUST use this exact structure:
+- fact_type: "relationship" or "marriage"
+- fact_value: The relationship type (MUST be one of: "spouse", "child", "parent", "sibling", "grandchild", "grandparent", "great_grandchild", "in_law")
+- related_name: The other person's FULL NAME (e.g., "Amy Blundon", "Patricia Blundon")
+- relationship_type: More specific descriptor (e.g., "son", "daughter", "wife", "husband", "brother", "sister", "grandson", "granddaughter")
+
+EXAMPLE - CORRECT relationship fact:
+{{
+  "fact_type": "relationship",
+  "subject_name": "Patricia Blundon",
+  "fact_value": "child",
+  "related_name": "Ryan Blundon",
+  "relationship_type": "son",
+  "extracted_context": "Mother of Ryan (Amy)"
+}}
+
+EXAMPLE - WRONG (do NOT do this):
+{{
+  "fact_type": "relationship",
+  "subject_name": "Patricia Blundon",
+  "fact_value": "Ryan Blundon",  // WRONG - should be relationship type
+  "relationship_type": "son"
+}}
 
 FACT TYPES:
 - person_name: Full name
@@ -403,8 +428,11 @@ async def extract_facts_from_obituary(
             db.commit()
             raise
 
-    # Convert to ExtractedFact objects
+    # Convert to ExtractedFact objects with deduplication
     extracted_facts = []
+    seen_facts = set()  # Track unique facts to prevent duplicates
+    duplicates_skipped = 0
+
     for fact_data in facts_data:
         # Skip facts without required fields
         if not fact_data.get('fact_type') or not fact_data.get('subject_name'):
@@ -420,6 +448,22 @@ async def extract_facts_from_obituary(
                 fact_value = fact_data.get('relationship_type', 'related')
             else:
                 fact_value = 'unknown'
+
+        # Create deduplication key from core fact attributes
+        dedup_key = (
+            fact_data['fact_type'],
+            fact_data['subject_name'],
+            fact_value,
+            fact_data.get('related_name'),
+            fact_data.get('relationship_type')
+        )
+
+        # Skip if we've already seen this exact fact
+        if dedup_key in seen_facts:
+            duplicates_skipped += 1
+            continue
+
+        seen_facts.add(dedup_key)
 
         fact = ExtractedFact(
             obituary_cache_id=obituary_cache_id,
@@ -445,7 +489,7 @@ async def extract_facts_from_obituary(
     for fact in extracted_facts:
         db.refresh(fact)
 
-    print(f"Stored {len(extracted_facts)} facts in database")
+    print(f"Stored {len(extracted_facts)} unique facts ({duplicates_skipped} duplicates skipped)")
 
     return extracted_facts
 

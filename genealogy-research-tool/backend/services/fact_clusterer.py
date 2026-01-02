@@ -294,32 +294,58 @@ class FactClusterer:
         ).all()
 
         # Group identical facts from different sources
+        # For relationships, include related_name in the key
         fact_groups = defaultdict(list)
 
         for fact in facts:
-            key = (fact.fact_type, fact.fact_value)
+            if fact.fact_type in ['relationship', 'marriage']:
+                # For relationships, group by (type, relationship_type, related_name)
+                rel = fact.relationship_type or fact.fact_value or 'unknown'
+                person = fact.related_name or 'unknown'
+                key = (fact.fact_type, rel, person)
+            else:
+                key = (fact.fact_type, fact.fact_value, None)
             fact_groups[key].append(fact)
 
         # Find corroborated facts (same fact from multiple sources)
         corroborated = []
-        for (fact_type, fact_value), fact_list in fact_groups.items():
+        for key, fact_list in fact_groups.items():
             source_count = len(set(f.obituary_cache_id for f in fact_list))
 
             if source_count > 1:
-                corroborated.append({
-                    'fact_type': fact_type,
-                    'fact_value': fact_value,
-                    'source_count': source_count,
-                    'avg_confidence': sum(float(f.confidence_score) for f in fact_list) / len(fact_list),
-                    'sources': [
-                        {
-                            'obituary_id': f.obituary_cache_id,
-                            'confidence': float(f.confidence_score),
-                            'extracted_context': f.extracted_context
-                        }
-                        for f in fact_list
-                    ]
-                })
+                fact_type = key[0]
+                if fact_type in ['relationship', 'marriage']:
+                    corroborated.append({
+                        'fact_type': fact_type,
+                        'relationship_type': key[1],
+                        'related_name': key[2],
+                        'fact_value': fact_list[0].fact_value,
+                        'source_count': source_count,
+                        'avg_confidence': sum(float(f.confidence_score) for f in fact_list) / len(fact_list),
+                        'sources': [
+                            {
+                                'obituary_id': f.obituary_cache_id,
+                                'confidence': float(f.confidence_score),
+                                'extracted_context': f.extracted_context
+                            }
+                            for f in fact_list
+                        ]
+                    })
+                else:
+                    corroborated.append({
+                        'fact_type': fact_type,
+                        'fact_value': key[1],
+                        'source_count': source_count,
+                        'avg_confidence': sum(float(f.confidence_score) for f in fact_list) / len(fact_list),
+                        'sources': [
+                            {
+                                'obituary_id': f.obituary_cache_id,
+                                'confidence': float(f.confidence_score),
+                                'extracted_context': f.extracted_context
+                            }
+                            for f in fact_list
+                        ]
+                    })
 
         # Sort by source count (most corroborated first)
         corroborated.sort(key=lambda x: x['source_count'], reverse=True)
