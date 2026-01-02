@@ -12,6 +12,8 @@ load_dotenv()
 from models import get_db, ObituaryCache, ExtractedFact, PersonCluster
 from services.llm_extractor import process_obituary_full
 from services.fact_clusterer import FactClusterer
+from services.gramps_client import GrampsClient
+from services.gramps_matcher import GrampsMatcher
 from utils.hash_utils import hash_url
 import json
 
@@ -488,6 +490,84 @@ async def test_matching(
         'name1': name1,
         'name2': name2,
         'match_result': result
+    }
+
+
+# ============================================================================
+# GRAMPS WEB INTEGRATION (Phase 3 - Read-Only)
+# ============================================================================
+
+@app.get("/api/gramps/health")
+async def gramps_health_check():
+    """
+    Check if Gramps Web is accessible.
+    """
+    gramps = GrampsClient()
+    is_healthy = gramps.health_check()
+
+    return {
+        'status': 'healthy' if is_healthy else 'unhealthy',
+        'gramps_url': gramps.base_url,
+        'connected': is_healthy
+    }
+
+
+@app.get("/api/gramps/search")
+async def search_gramps_people(
+    query: str = None,
+    surname: str = None,
+    given_name: str = None,
+    limit: int = 10
+):
+    """
+    Search Gramps Web for people.
+
+    Direct passthrough to Gramps API for testing.
+    """
+    gramps = GrampsClient()
+
+    results = gramps.search_people(
+        query=query,
+        surname=surname,
+        given_name=given_name,
+        limit=limit
+    )
+
+    return {
+        'count': len(results),
+        'results': results
+    }
+
+
+@app.get("/api/clusters/{cluster_id}/gramps-matches")
+async def find_gramps_matches(
+    cluster_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Find potential Gramps Web matches for a person cluster.
+
+    READ-ONLY: Does not modify Gramps data.
+    """
+    matcher = GrampsMatcher(db)
+
+    matches = matcher.find_matches_for_cluster(cluster_id)
+
+    return {
+        'cluster_id': cluster_id,
+        'matches_found': len(matches),
+        'matches': [
+            {
+                'gramps_id': m['gramps_id'],
+                'name': m['gramps_facts']['names'][0]['full'] if m['gramps_facts']['names'] else 'Unknown',
+                'match_confidence': m['match_confidence'],
+                'match_reasons': m['match_reasons'],
+                'conflicts': m['conflicts'],
+                'birth_date': m['gramps_facts'].get('birth_date'),
+                'death_date': m['gramps_facts'].get('death_date')
+            }
+            for m in matches
+        ]
     }
 
 

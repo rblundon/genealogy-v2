@@ -41,6 +41,10 @@ services:
       MARIADB_DATABASE: ${MARIADB_DATABASE:-genealogy_cache}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       ENVIRONMENT: ${ENVIRONMENT:-development}
+      GRAMPS_WEB_URL: ${GRAMPS_WEB_URL}
+      GRAMPS_USERNAME: ${GRAMPS_USERNAME}
+      GRAMPS_PASSWORD: ${GRAMPS_PASSWORD}
+      GRAMPS_API_TOKEN: ${GRAMPS_API_TOKEN:-}
     volumes:
       - ./backend:/app:rw
     networks:
