@@ -57,8 +57,18 @@ class FactClusterer:
             - confidence
         """
         # Get all unique subject names
-        all_names_result = self.db.query(distinct(ExtractedFact.subject_name)).all()
-        all_names = [name[0] for name in all_names_result]
+        subject_names_result = self.db.query(distinct(ExtractedFact.subject_name)).all()
+        subject_names = [name[0] for name in subject_names_result]
+
+        # ALSO get all unique related names from relationship facts
+        related_names_result = self.db.query(distinct(ExtractedFact.related_name)).filter(
+            ExtractedFact.related_name.isnot(None),
+            ExtractedFact.fact_type.in_(['relationship', 'marriage'])
+        ).all()
+        related_names = [name[0] for name in related_names_result]
+
+        # Combine both (deduplicate)
+        all_names = list(set(subject_names + related_names))
 
         print(f"Clustering {len(all_names)} unique names across obituaries...")
 
@@ -88,9 +98,24 @@ class FactClusterer:
                     processed.add(matched_name)
 
             # Get all facts for all variants in this cluster
-            all_facts = self.db.query(ExtractedFact).filter(
+            # Include facts where person is subject_name
+            subject_facts = self.db.query(ExtractedFact).filter(
                 ExtractedFact.subject_name.in_(cluster_variants)
             ).all()
+
+            # ALSO include facts where person is related_name (they appear in someone else's obituary)
+            related_facts = self.db.query(ExtractedFact).filter(
+                ExtractedFact.related_name.in_(cluster_variants),
+                ExtractedFact.fact_type.in_(['relationship', 'marriage'])
+            ).all()
+
+            # Combine and deduplicate by fact ID
+            fact_ids_seen = set()
+            all_facts = []
+            for fact in subject_facts + related_facts:
+                if fact.id not in fact_ids_seen:
+                    fact_ids_seen.add(fact.id)
+                    all_facts.append(fact)
 
             if not all_facts:
                 continue

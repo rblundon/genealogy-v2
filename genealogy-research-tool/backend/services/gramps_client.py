@@ -558,3 +558,273 @@ class GrampsClient:
             import traceback
             traceback.print_exc()
             return None
+
+    # ========================================================================
+    # PERSON CREATION (Phase 3 Stage 3)
+    # ========================================================================
+
+    def create_person(
+        self,
+        given_name: str,
+        surname: str,
+        gender: str = 'U',
+        birth_date: str = None,
+        death_date: str = None,
+        birth_place: str = None,
+        death_place: str = None
+    ) -> Optional[Dict]:
+        """
+        Create a new person in Gramps.
+
+        Args:
+            given_name: Given name(s)
+            surname: Surname/family name
+            gender: 'M', 'F', or 'U'
+            birth_date: ISO date string (YYYY-MM-DD)
+            death_date: ISO date string
+            birth_place: Birth location
+            death_place: Death location
+
+        Returns:
+            Created person object with gramps_id and handle
+        """
+        # Build primary name
+        primary_name = {
+            'first_name': given_name,
+            'surname_list': [{'surname': surname}],
+            'type': {'_class': 'NameType', 'string': 'Birth Name'}
+        }
+
+        # Map gender to Gramps format (0=Female, 1=Male, 2=Unknown)
+        gender_map = {'F': 0, 'M': 1, 'U': 2}
+        gender_val = gender_map.get(gender.upper() if gender else 'U', 2)
+
+        person_data = {
+            'primary_name': primary_name,
+            'gender': gender_val
+        }
+
+        try:
+            # Create person
+            result = self._request('POST', '/people/', json=person_data)
+
+            # Handle response format
+            if isinstance(result, list) and len(result) > 0:
+                item = result[0]
+                if isinstance(item, dict) and 'new' in item:
+                    person = item['new']
+                else:
+                    person = item
+            else:
+                person = result
+
+            if not person:
+                return None
+
+            person_handle = person.get('handle')
+            person_id = person.get('gramps_id')
+
+            # Add birth event if date provided
+            if birth_date:
+                self._add_event_to_person(
+                    person_handle=person_handle,
+                    event_type='Birth',
+                    date=birth_date,
+                    place=birth_place
+                )
+
+            # Add death event if date provided
+            if death_date:
+                self._add_event_to_person(
+                    person_handle=person_handle,
+                    event_type='Death',
+                    date=death_date,
+                    place=death_place
+                )
+
+            # Fetch updated person
+            return self.get_person(person_handle)
+
+        except Exception as e:
+            print(f"Failed to create person: {e}")
+            return None
+
+    def _add_event_to_person(
+        self,
+        person_handle: str,
+        event_type: str,
+        date: str = None,
+        place: str = None
+    ) -> bool:
+        """
+        Create an event and link it to a person.
+
+        Args:
+            person_handle: Gramps person handle
+            event_type: 'Birth', 'Death', 'Marriage', etc.
+            date: ISO date string
+            place: Location string
+
+        Returns:
+            True if successful
+        """
+        try:
+            # Create event
+            event_data = {
+                'type': {'_class': 'EventType', 'string': event_type}
+            }
+
+            # Add date if provided
+            if date:
+                # Parse ISO date to Gramps format
+                parts = date.split('-')
+                if len(parts) >= 1:
+                    year = int(parts[0])
+                    month = int(parts[1]) if len(parts) > 1 else 0
+                    day = int(parts[2]) if len(parts) > 2 else 0
+                    event_data['date'] = {
+                        'dateval': [day, month, year, False],
+                        'modifier': 0,  # Normal date
+                        'quality': 0    # Normal quality
+                    }
+
+            # Create event
+            result = self._request('POST', '/events/', json=event_data)
+
+            # Handle response format
+            if isinstance(result, list) and len(result) > 0:
+                item = result[0]
+                if isinstance(item, dict) and 'new' in item:
+                    event = item['new']
+                else:
+                    event = item
+            else:
+                event = result
+
+            if not event:
+                return False
+
+            event_handle = event.get('handle')
+
+            # Get current person and add event reference
+            person = self.get_person(person_handle)
+            if not person:
+                return False
+
+            event_refs = person.get('event_ref_list', [])
+
+            # Add event reference
+            event_refs.append({
+                'ref': event_handle,
+                'role': {'_class': 'EventRoleType', 'string': 'Primary'}
+            })
+
+            # Update person - must send full object for PUT
+            person['event_ref_list'] = event_refs
+            self._request('PUT', f'/people/{person_handle}', json=person)
+
+            return True
+
+        except Exception as e:
+            print(f"Failed to add event to person: {e}")
+            return False
+
+    def create_family(
+        self,
+        parent1_handle: str = None,
+        parent2_handle: str = None,
+        child_handles: List[str] = None,
+        relationship_type: str = 'Married'
+    ) -> Optional[Dict]:
+        """
+        Create a family record linking people.
+
+        Args:
+            parent1_handle: Gramps person handle for parent/spouse 1
+            parent2_handle: Gramps person handle for parent/spouse 2
+            child_handles: List of Gramps person handles for children
+            relationship_type: 'Married', 'Unmarried', etc.
+
+        Returns:
+            Created family object
+        """
+        try:
+            family_data = {
+                'type': {'_class': 'FamilyRelType', 'string': relationship_type}
+            }
+
+            if parent1_handle:
+                family_data['father_handle'] = parent1_handle
+
+            if parent2_handle:
+                family_data['mother_handle'] = parent2_handle
+
+            if child_handles:
+                child_refs = []
+                for child_handle in child_handles:
+                    child_refs.append({
+                        'ref': child_handle,
+                        'frel': {'_class': 'ChildRefType', 'string': 'Birth'},
+                        'mrel': {'_class': 'ChildRefType', 'string': 'Birth'}
+                    })
+
+                if child_refs:
+                    family_data['child_ref_list'] = child_refs
+
+            # Create family
+            result = self._request('POST', '/families/', json=family_data)
+
+            # Handle response format
+            if isinstance(result, list) and len(result) > 0:
+                item = result[0]
+                if isinstance(item, dict) and 'new' in item:
+                    return item['new']
+                return item
+            return result
+
+        except Exception as e:
+            print(f"Failed to create family: {e}")
+            return None
+
+    def add_alternate_name(
+        self,
+        person_handle: str,
+        given_name: str,
+        surname: str,
+        name_type: str = 'Also Known As'
+    ) -> bool:
+        """
+        Add an alternate name to a person.
+
+        Args:
+            person_handle: Gramps person handle
+            given_name: Given name
+            surname: Surname
+            name_type: Type of alternate name
+
+        Returns:
+            True if successful
+        """
+        try:
+            person = self.get_person(person_handle)
+            if not person:
+                return False
+
+            alt_names = person.get('alternate_names', [])
+
+            # Add new alternate name
+            alt_names.append({
+                'first_name': given_name,
+                'surname_list': [{'surname': surname}],
+                'type': {'_class': 'NameType', 'string': name_type}
+            })
+
+            # Update person - must send full object for PUT
+            person['alternate_names'] = alt_names
+            self._request('PUT', f'/people/{person_handle}', json=person)
+
+            return True
+
+        except Exception as e:
+            print(f"Failed to add alternate name: {e}")
+            return False

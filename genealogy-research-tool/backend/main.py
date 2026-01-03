@@ -15,6 +15,7 @@ from services.fact_clusterer import FactClusterer
 from services.gramps_client import GrampsClient
 from services.gramps_matcher import GrampsMatcher
 from services.gramps_citation_service import CitationService
+from services.gramps_person_creator import PersonCreator
 from utils.hash_utils import hash_url
 import json
 
@@ -424,6 +425,49 @@ async def list_clusters(
     }
 
 
+@app.get("/api/clusters/ready-for-creation")
+async def get_clusters_ready_for_creation(
+    min_confidence: float = 0.80,
+    min_sources: int = 2,
+    db: Session = Depends(get_db)
+):
+    """
+    Get clusters that are good candidates for person creation.
+
+    Filters:
+    - Not already linked to Gramps
+    - Meets minimum confidence threshold
+    - Has minimum number of sources
+
+    Args:
+        min_confidence: Minimum confidence score (default: 0.80)
+        min_sources: Minimum number of sources (default: 2)
+    """
+    clusters = db.query(PersonCluster).filter(
+        PersonCluster.gramps_person_id.is_(None),
+        PersonCluster.confidence_score >= min_confidence,
+        PersonCluster.source_count >= min_sources
+    ).order_by(
+        PersonCluster.source_count.desc(),
+        PersonCluster.confidence_score.desc()
+    ).all()
+
+    results = []
+    for cluster in clusters:
+        results.append({
+            'cluster_id': cluster.id,
+            'canonical_name': cluster.canonical_name,
+            'confidence': float(cluster.confidence_score) if cluster.confidence_score else None,
+            'source_count': cluster.source_count,
+            'fact_count': cluster.fact_count
+        })
+
+    return {
+        'count': len(results),
+        'clusters': results
+    }
+
+
 @app.get("/api/clusters/{cluster_id}")
 async def get_cluster_details(
     cluster_id: int,
@@ -691,6 +735,77 @@ async def get_gramps_audit_trail(
         'citation_count': len(citations),
         'citations': citations
     }
+
+
+# ============================================================================
+# PERSON CREATION ENDPOINTS (Phase 3 Stage 3)
+# ============================================================================
+
+@app.get("/api/clusters/{cluster_id}/creation-preview")
+async def preview_person_creation(
+    cluster_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Preview what would be created in Gramps for this cluster.
+
+    Shows:
+    - Person data (name, dates, etc.)
+    - Which relationships can be created
+    - Source citations
+
+    Does NOT create anything (read-only).
+    """
+    creator = PersonCreator(db)
+
+    try:
+        preview = creator.preview_person_creation(cluster_id)
+        return preview
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/clusters/{cluster_id}/create-in-gramps")
+async def create_person_in_gramps(
+    cluster_id: int,
+    create_relationships: bool = True,
+    db: Session = Depends(get_db)
+):
+    """
+    Create a new person in Gramps Web from this cluster.
+
+    PERFORMS WRITES TO GRAMPS WEB:
+    - Creates new person record
+    - Adds birth/death events
+    - Creates family relationships (if requested)
+    - Creates source citations
+    - Updates cluster.gramps_person_id
+
+    Args:
+        cluster_id: PersonCluster ID
+        create_relationships: Whether to create family links (default: true)
+
+    Returns:
+        Summary of creation operation
+    """
+    creator = PersonCreator(db)
+
+    try:
+        result = creator.create_person_from_cluster(
+            cluster_id=cluster_id,
+            create_relationships=create_relationships
+        )
+
+        return {
+            'status': 'success',
+            **result
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":

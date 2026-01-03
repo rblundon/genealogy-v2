@@ -174,6 +174,12 @@ EXAMPLE - WRONG (do NOT do this):
   "relationship_type": "son"
 }}
 
+**SPECIAL ATTENTION TO MAIDEN NAMES:**
+Look very carefully at the deceased person's name line for maiden name indicators:
+- Parentheses with "Nee", "née", "born", or "formerly"
+- These are CRITICAL for GEDCOM compliance
+- Example: "Smith, Jane (Nee Jones)" → maiden_name fact with value "Jones"
+
 FACT TYPES:
 - person_name: Full name
 - person_nickname: Nickname or alternate name
@@ -181,7 +187,62 @@ FACT TYPES:
 - person_death_age: Age at death
 - person_birth_date: Birth date (rare in obituaries)
 - person_gender: M or F
-- maiden_name: Maiden name (before marriage)
+- maiden_name: Maiden name (surname before marriage)
+
+**MAIDEN NAME EXTRACTION (CRITICAL):**
+
+Maiden names appear in several patterns - extract from ANY of these:
+1. "(Nee Surname)" or "(née Surname)" → maiden name is "Surname"
+2. "(Born Surname)" → maiden name is "Surname"
+3. "maiden name Surname" or "née Surname" → maiden name is "Surname"
+4. "(formerly Surname)" → maiden name is "Surname"
+5. In formal format: "Married-Name, Given (Nee Maiden-Name)" → extract "Maiden-Name"
+
+**MAIDEN NAME EXAMPLES:**
+
+Text: "Blundon, Patricia L. (Nee Kaczmarowski)"
+Extract:
+{{
+  "fact_type": "maiden_name",
+  "subject_name": "Patricia L. Blundon",
+  "subject_role": "deceased",
+  "fact_value": "Kaczmarowski",
+  "extracted_context": "(Nee Kaczmarowski)",
+  "is_inferred": false,
+  "confidence_score": 1.0
+}}
+
+Text: "Johnson, Mary Elizabeth (née Smith)"
+Extract:
+{{
+  "fact_type": "maiden_name",
+  "subject_name": "Mary Elizabeth Johnson",
+  "subject_role": "deceased",
+  "fact_value": "Smith",
+  "extracted_context": "(née Smith)",
+  "is_inferred": false,
+  "confidence_score": 1.0
+}}
+
+Text: "Kaczmarowski, Maxine V. (NEE Paradowski)"
+Extract:
+{{
+  "fact_type": "maiden_name",
+  "subject_name": "Maxine V. Kaczmarowski",
+  "subject_role": "deceased",
+  "fact_value": "Paradowski",
+  "extracted_context": "(NEE Paradowski)",
+  "is_inferred": false,
+  "confidence_score": 1.0
+}}
+
+**IMPORTANT:**
+- Maiden names are ALWAYS surnames only (not full names)
+- Extract from parenthetical notations in the person's name line
+- High confidence (1.0) when explicitly stated with "Nee", "née", or "born"
+- Only extract for the person whose name contains the notation
+- Case insensitive: "Nee", "NEE", "née" all indicate maiden name
+
 - relationship: A relationship between two people
 - marriage: Marriage relationship (use for spouses)
 - marriage_duration: Years married
