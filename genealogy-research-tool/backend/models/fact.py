@@ -131,3 +131,39 @@ class PersonCluster(Base):
 
     def __repr__(self):
         return f"<PersonCluster(id={self.id}, name='{self.canonical_name}', sources={self.source_count})>"
+
+
+class GrampsCitation(Base):
+    """
+    Tracks citations created in Gramps Web from obituaries.
+
+    Maintains audit trail of all writes to SSOT.
+    """
+    __tablename__ = 'gramps_citations'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # Link to our data
+    obituary_cache_id = Column(Integer, ForeignKey('obituary_cache.id', ondelete='CASCADE'), nullable=False)
+    person_cluster_id = Column(Integer, ForeignKey('person_clusters.id', ondelete='CASCADE'))
+
+    # Gramps identifiers
+    gramps_person_id = Column(String(50), nullable=False, index=True)  # e.g., "I0071"
+    gramps_source_id = Column(String(50), index=True)  # e.g., "S0001"
+    gramps_citation_id = Column(String(50), index=True)  # e.g., "C0001"
+
+    # Citation details
+    citation_type = Column(String(50), default='obituary')
+    obituary_name = Column(String(255))  # Denormalized for audit trail readability
+    confidence = Column(Enum('very_high', 'high', 'medium', 'low'), default='high')
+
+    # Metadata
+    created_timestamp = Column(TIMESTAMP, server_default=func.current_timestamp())
+    created_by = Column(String(100), default='genealogy_tool')
+
+    # Relationships
+    obituary = relationship("ObituaryCache")
+    person_cluster = relationship("PersonCluster")
+
+    def __repr__(self):
+        return f"<GrampsCitation(person={self.gramps_person_id}, citation={self.gramps_citation_id})>"

@@ -1,6 +1,6 @@
 from .database import Base, engine, get_db, SessionLocal
 from .obituary import ObituaryCache, LLMCache
-from .fact import ExtractedFact, PersonCluster
+from .fact import ExtractedFact, PersonCluster, GrampsCitation
 from .config import ConfigSettings, AuditLog
 
 __all__ = [
@@ -12,6 +12,7 @@ __all__ = [
     'LLMCache',
     'ExtractedFact',
     'PersonCluster',
+    'GrampsCitation',
     'ConfigSettings',
     'AuditLog'
 ]

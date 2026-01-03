@@ -9,11 +9,12 @@ from dotenv import load_dotenv
 # Load environment
 load_dotenv()
 
-from models import get_db, ObituaryCache, ExtractedFact, PersonCluster
+from models import get_db, ObituaryCache, ExtractedFact, PersonCluster, GrampsCitation
 from services.llm_extractor import process_obituary_full
 from services.fact_clusterer import FactClusterer
 from services.gramps_client import GrampsClient
 from services.gramps_matcher import GrampsMatcher
+from services.gramps_citation_service import CitationService
 from utils.hash_utils import hash_url
 import json
 
@@ -559,6 +560,7 @@ async def find_gramps_matches(
         'matches': [
             {
                 'gramps_id': m['gramps_id'],
+                'gramps_handle': m['gramps_person'].get('handle'),
                 'name': m['gramps_facts']['names'][0]['full'] if m['gramps_facts']['names'] else 'Unknown',
                 'match_confidence': m['match_confidence'],
                 'match_reasons': m['match_reasons'],
@@ -568,6 +570,126 @@ async def find_gramps_matches(
             }
             for m in matches
         ]
+    }
+
+
+# ============================================================================
+# GRAMPS CITATION ENDPOINTS (Phase 3 Stage 2 - Write Operations)
+# ============================================================================
+
+class LinkGrampsRequest(BaseModel):
+    """Request to link a cluster to a Gramps person"""
+    gramps_person_id: str
+    gramps_handle: str
+    confidence: str = 'high'
+
+
+@app.post("/api/clusters/{cluster_id}/link-gramps")
+async def link_cluster_to_gramps(
+    cluster_id: int,
+    request: LinkGrampsRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Link a person cluster to a Gramps person and create citations.
+
+    This is the main write operation that:
+    1. Updates the cluster with gramps_person_id
+    2. Creates source records in Gramps for each obituary
+    3. Creates citation records linking persons to sources
+    4. Records all writes in local gramps_citations table
+    """
+    citation_service = CitationService(db)
+
+    result = citation_service.link_cluster_to_gramps(
+        cluster_id=cluster_id,
+        gramps_person_id=request.gramps_person_id,
+        gramps_handle=request.gramps_handle,
+        confidence=request.confidence
+    )
+
+    if not result.get('success'):
+        raise HTTPException(status_code=400, detail=result.get('error', 'Unknown error'))
+
+    return result
+
+
+@app.get("/api/clusters/{cluster_id}/citations")
+async def get_cluster_citations(
+    cluster_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Get all citations created for a person cluster.
+    """
+    citation_service = CitationService(db)
+
+    citations = citation_service.get_cluster_citations(cluster_id)
+
+    return {
+        'cluster_id': cluster_id,
+        'citation_count': len(citations),
+        'citations': citations
+    }
+
+
+@app.delete("/api/clusters/{cluster_id}/gramps-link")
+async def unlink_cluster_from_gramps(
+    cluster_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Remove Gramps link from a cluster.
+
+    Note: This does NOT delete data from Gramps Web.
+    It only removes the link in our local database.
+    """
+    citation_service = CitationService(db)
+
+    result = citation_service.unlink_cluster(cluster_id)
+
+    if not result.get('success'):
+        raise HTTPException(status_code=400, detail=result.get('error', 'Unknown error'))
+
+    return result
+
+
+@app.get("/api/gramps/person/{gramps_person_id}/citations")
+async def get_gramps_person_citations(
+    gramps_person_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Get all citations we've created for a Gramps person.
+    """
+    citation_service = CitationService(db)
+
+    citations = citation_service.get_person_citations(gramps_person_id)
+
+    return {
+        'gramps_person_id': gramps_person_id,
+        'citation_count': len(citations),
+        'citations': citations
+    }
+
+
+@app.get("/api/gramps/audit-trail")
+async def get_gramps_audit_trail(
+    limit: int = 50,
+    db: Session = Depends(get_db)
+):
+    """
+    Get audit trail of all citations created in Gramps.
+
+    Shows recent citations with readable obituary names for easy review.
+    """
+    citation_service = CitationService(db)
+
+    citations = citation_service.get_audit_trail(limit=limit)
+
+    return {
+        'citation_count': len(citations),
+        'citations': citations
     }
 
 

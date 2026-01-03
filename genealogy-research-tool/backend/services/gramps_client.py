@@ -357,3 +357,204 @@ class GrampsClient:
             return None
         except:
             return None
+
+    # ========================================================================
+    # WRITE OPERATIONS (Phase 3 Stage 2+)
+    # ========================================================================
+
+    def create_source(
+        self,
+        title: str,
+        author: str = None,
+        pubinfo: str = None,
+        url: str = None
+    ) -> Optional[Dict]:
+        """
+        Create a source record in Gramps.
+
+        Args:
+            title: Source title (e.g., "Obituary of John Smith")
+            author: Author or publisher
+            pubinfo: Publication information
+            url: URL to source
+
+        Returns:
+            Created source object or None if failed
+        """
+        source_data = {
+            'title': title,
+        }
+
+        if author:
+            source_data['author'] = author
+        if pubinfo:
+            source_data['pubinfo'] = pubinfo
+
+        # Add URL as attribute
+        if url:
+            source_data['attribute_list'] = [{
+                'type': {'_class': 'SrcAttributeType', 'string': 'URL'},
+                'value': url
+            }]
+
+        try:
+            result = self._request('POST', '/sources/', json=source_data)
+            # API may return a list with the created object, or just the object
+            if isinstance(result, list) and len(result) > 0:
+                # The response has nested 'new' object with the actual source
+                item = result[0]
+                if isinstance(item, dict) and 'new' in item:
+                    return item['new']
+                return item
+            return result
+        except Exception as e:
+            print(f"Failed to create source: {e}")
+            return None
+
+    def create_citation(
+        self,
+        source_handle: str,
+        page: str = None,
+        confidence: int = 2,
+        note: str = None
+    ) -> Optional[Dict]:
+        """
+        Create a citation for a source.
+
+        Args:
+            source_handle: Gramps source handle (not ID - use handle from source object)
+            page: Page reference or detail
+            confidence: Confidence level (0=very low, 4=very high)
+            note: Citation note (stored as page for simplicity)
+
+        Returns:
+            Created citation object or None if failed
+        """
+        citation_data = {
+            'source_handle': source_handle,
+            'confidence': confidence
+        }
+
+        # Use page field for the note/reference since note_list has complex format
+        if page:
+            citation_data['page'] = page
+        elif note:
+            citation_data['page'] = note
+
+        try:
+            result = self._request('POST', '/citations/', json=citation_data)
+            # API may return a list with the created object, or just the object
+            if isinstance(result, list) and len(result) > 0:
+                # The response has nested 'new' object with the actual citation
+                item = result[0]
+                if isinstance(item, dict) and 'new' in item:
+                    return item['new']
+                return item
+            return result
+        except Exception as e:
+            print(f"Failed to create citation: {e}")
+            return None
+
+    def add_citation_to_person(
+        self,
+        person_handle: str,
+        citation_handle: str
+    ) -> bool:
+        """
+        Add a citation to a person record.
+
+        Args:
+            person_handle: Gramps person handle
+            citation_handle: Gramps citation handle
+
+        Returns:
+            True if successful
+        """
+        try:
+            # Get current person
+            person = self.get_person(person_handle)
+            if not person:
+                return False
+
+            # Get citation list
+            citation_list = person.get('citation_list', [])
+
+            # Check if citation already exists
+            if citation_handle in citation_list:
+                print(f"Citation already exists on person")
+                return True
+
+            # Add citation
+            citation_list.append(citation_handle)
+
+            # Update person
+            update_data = {'citation_list': citation_list}
+            self._request('PUT', f'/people/{person_handle}', json=update_data)
+
+            return True
+        except Exception as e:
+            print(f"Failed to add citation to person: {e}")
+            return False
+
+    def find_or_create_source(
+        self,
+        title: str,
+        url: str,
+        author: str = None,
+        pubinfo: str = None
+    ) -> Optional[tuple]:
+        """
+        Find existing source by title/URL or create new one.
+
+        Args:
+            title: Source title
+            url: Source URL
+            author: Author
+            pubinfo: Publication info
+
+        Returns:
+            Tuple of (gramps_id, handle) or None if failed
+        """
+        try:
+            # Get all sources and search locally (API may not support search params)
+            sources = self._request('GET', '/sources/')
+
+            if isinstance(sources, dict) and 'data' in sources:
+                sources = sources['data']
+
+            # Make sure sources is a list
+            if not isinstance(sources, list):
+                sources = []
+
+            # Check if any match our URL
+            for source in sources:
+                if not isinstance(source, dict):
+                    continue
+                for attr in source.get('attribute_list', []):
+                    if not isinstance(attr, dict):
+                        continue
+                    attr_type = attr.get('type', {})
+                    if isinstance(attr_type, dict):
+                        type_str = attr_type.get('string', '')
+                    else:
+                        type_str = str(attr_type)
+                    if type_str == 'URL' and attr.get('value') == url:
+                        return (source.get('gramps_id'), source.get('handle'))
+
+            # Not found, create new
+            new_source = self.create_source(
+                title=title,
+                author=author,
+                pubinfo=pubinfo,
+                url=url
+            )
+
+            if new_source:
+                return (new_source.get('gramps_id'), new_source.get('handle'))
+
+            return None
+        except Exception as e:
+            print(f"Error finding/creating source: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
