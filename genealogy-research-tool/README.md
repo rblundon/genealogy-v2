@@ -1,24 +1,69 @@
 # Genealogy Research Tool
 
-Extract genealogical facts from obituaries using LLM technology with multi-source corroboration.
-
-## Phase 1: Foundation
-
-Current capabilities:
-- Multi-pass LLM extraction (person mentions -> facts)
-- Proper handling of parenthetical notation: "Ryan (Amy)" -> 2 people
-- Nickname extraction: "Patricia L. 'Patsy'"
-- Maiden name parsing: "(nee Kaczmarowski)"
-- Confidence scoring with inference tracking
-- LLM response caching (cost optimization)
-- Fact-based architecture (not entity-based)
+Automated genealogy research using LLM technology to extract facts from obituaries and build GEDCOM-compliant family trees in Gramps Web.
 
 ## Quick Start
 
-1. **Setup environment:**
+See [docs/README.md](docs/README.md) for complete documentation.
+
+**Process an obituary in 3 commands:**
+```bash
+# 1. Process obituary
+curl -X POST "http://localhost:8000/api/obituaries/process" \
+  -H "Content-Type: application/json" \
+  -d '{"obituary_text": "...", "source_url": "..."}' | python3 -m json.tool
+
+# 2. Generate clusters
+curl -X POST http://localhost:8000/api/clusters/generate | python3 -m json.tool
+
+# 3. Create people in Gramps
+curl -X POST "http://localhost:8000/api/clusters/{ID}/create-in-gramps?create_relationships=true" | \
+  python3 -m json.tool
+```
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Documentation Index](docs/README.md) | Overview and quick start |
+| [API Reference](docs/API_REFERENCE.md) | Complete API documentation |
+| [Changelog](docs/CHANGELOG.md) | Version history |
+| [Roadmap](docs/ROADMAP.md) | Future plans |
+
+## Features
+
+- Multi-pass LLM fact extraction
+- Maiden name extraction (GEDCOM-compliant)
+- Cross-obituary clustering with fuzzy matching
+- Multi-source corroboration
+- Gramps Web SSOT integration
+- GEDCOM-compliant person creation
+- Automatic relationship linking
+- Complete audit trail
+
+## Status
+
+**Version:** 1.0.0 (Phase 3 Stage 3 Complete)
+**Last Updated:** 2026-01-03
+
+### Completed Phases
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| 1 | Foundation (LLM extraction, caching) | Complete |
+| 2 | Clustering & Deduplication | Complete |
+| 3.1 | Gramps Integration (Read-Only) | Complete |
+| 3.2 | Citation Creation | Complete |
+| 3.3 | Person Creation with Relationships | Complete |
+
+See [CHANGELOG.md](docs/CHANGELOG.md) for details.
+
+## Setup
+
+1. **Configure environment:**
 ```bash
 cp .env.example .env
-# Edit .env with your OpenAI API key and database password
+# Edit .env with your API keys and settings
 ```
 
 2. **Start containers:**
@@ -26,31 +71,38 @@ cp .env.example .env
 podman-compose up -d
 ```
 
-3. **Run tests:**
+3. **Verify health:**
 ```bash
-cd backend
-python -m pytest tests/test_extraction.py -v -s
+curl http://localhost:8000/health | python3 -m json.tool
+curl http://localhost:8000/api/gramps/health | python3 -m json.tool
 ```
 
-4. **Process an obituary via API:**
-```bash
-curl -X POST http://localhost:8000/api/obituaries/process \
-  -H "Content-Type: application/json" \
-  -d '{
-    "obituary_text": "Your obituary text here...",
-    "source_url": "http://example.com/obituary"
-  }'
+## Architecture
+
+```
+Obituary Text --> LLM Extractor --> Extracted Facts
+                                          |
+                                          v
+Gramps Web <-- Person Creator <-- Person Clusters
+  (SSOT)                         (Corroborated)
 ```
 
-## API Endpoints
+### Key Concepts
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Health check |
-| `/api/obituaries/process` | POST | Process an obituary |
-| `/api/obituaries/{id}/facts` | GET | Get facts for an obituary |
-| `/api/obituaries` | GET | List all obituaries |
-| `/api/facts/by-person/{name}` | GET | Get facts by person name |
+- **Fact-Based Architecture** - Extract atomic facts, never bundle prematurely
+- **Multi-Source Corroboration** - Higher confidence when facts appear in multiple obituaries
+- **Gramps as SSOT** - Gramps Web is the Single Source of Truth
+- **GEDCOM Compliance** - Maiden names as primary surnames per genealogy standards
+
+## Technology Stack
+
+| Component | Technology |
+|-----------|------------|
+| Backend | Python 3.11+, FastAPI |
+| Database | MariaDB (SQLAlchemy 2.0) |
+| LLM | OpenAI GPT-4o |
+| Genealogy | Gramps Web API |
+| Containers | Podman / Podman Compose |
 
 ## Test Data
 
@@ -59,75 +111,6 @@ Three real obituaries are included in `backend/tests/test_data/`:
 - `terrence_obit.txt` - Terrence E. Kaczmarowski (2008)
 - `maxine_obit.txt` - Maxine V. Kaczmarowski (2018)
 
-These demonstrate:
-- Name variants across obituaries
-- Fuzzy matching needs (Rose Mary vs Rosemary)
-- Timeline validation (Patricia died before Terrence)
-- Multi-source corroboration
-
-## Architecture
-
-**Fact-Based Approach:**
-- Extract atomic facts (claims with confidence scores)
-- Never bundle facts into entities prematurely
-- Enable multi-source corroboration
-- Gramps Web is Single Source of Truth (SSOT)
-
-**Multi-Pass Extraction:**
-1. Pass 1: Extract person mentions (handle parenthetical notation)
-2. Pass 2: Extract facts about each person
-
-**Database:**
-- `obituary_cache` - Raw obituary content
-- `llm_cache` - LLM requests/responses (cost optimization)
-- `extracted_facts` - THE core table (atomic claims)
-- `person_clusters` - Same person across obituaries (Phase 2)
-
-## Project Structure
-
-```
-genealogy-research-tool/
-├── backend/
-│   ├── models/
-│   │   ├── __init__.py
-│   │   ├── database.py
-│   │   ├── obituary.py
-│   │   ├── fact.py
-│   │   └── config.py
-│   ├── services/
-│   │   ├── __init__.py
-│   │   ├── llm_extractor.py
-│   │   └── person_matcher.py (stub for Phase 2)
-│   ├── utils/
-│   │   ├── __init__.py
-│   │   └── hash_utils.py
-│   ├── tests/
-│   │   ├── __init__.py
-│   │   ├── test_data/
-│   │   │   ├── terrence_obit.txt
-│   │   │   ├── maxine_obit.txt
-│   │   │   └── patricia_obit.txt
-│   │   ├── test_extraction.py
-│   │   └── expected_facts.py
-│   ├── main.py
-│   ├── requirements.txt
-│   └── Dockerfile
-├── database/
-│   └── schema.sql
-├── podman-compose.yml
-├── .env.example
-├── .gitignore
-└── README.md
-```
-
-## Next Steps (Phase 2)
-
-- [ ] Cross-obituary clustering (fuzzy matching)
-- [ ] Multi-source corroboration
-- [ ] Gramps Web integration (SSOT resolution)
-- [ ] Conflict detection
-- [ ] Review UI
-
 ## License
 
-MIT
+GNU General Public License v3.0 - See LICENSE file for details.
