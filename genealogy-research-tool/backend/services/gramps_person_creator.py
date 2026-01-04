@@ -137,19 +137,32 @@ class PersonCreator:
 
     def _get_cluster_facts(self, cluster: PersonCluster) -> List[ExtractedFact]:
         """Get all facts for a cluster, trying multiple methods."""
+        print(f"\n=== DEBUG: _get_cluster_facts for cluster {cluster.id} ({cluster.canonical_name}) ===")
+
         # Try by cluster ID first
         facts = self.db.query(ExtractedFact).filter(
             ExtractedFact.person_cluster_id == cluster.id
         ).all()
 
+        print(f"Facts found by person_cluster_id: {len(facts)}")
+
         if facts:
+            fact_types = list(set(f.fact_type for f in facts))
+            print(f"Fact types: {fact_types}")
+            rel_facts = [f for f in facts if f.fact_type in ['relationship', 'marriage']]
+            print(f"Relationship facts: {len(rel_facts)}")
+            for rf in rel_facts:
+                print(f"  - {rf.relationship_type} to {rf.related_name}")
             return facts
 
         # Fallback: find facts by name variants
         name_variants = json.loads(cluster.name_variants) if cluster.name_variants else [cluster.canonical_name]
+        print(f"No facts found by cluster ID, trying name variants: {name_variants}")
         facts = self.db.query(ExtractedFact).filter(
             ExtractedFact.subject_name.in_(name_variants)
         ).all()
+
+        print(f"Facts found by name variants: {len(facts)}")
 
         return facts
 
@@ -280,23 +293,60 @@ class PersonCreator:
 
         Only creates relationships to people already in Gramps.
         """
+        print(f"\n=== DEBUG: _create_relationships ===")
+        print(f"Cluster ID: {cluster_id}")
+        print(f"Gramps Person ID: {gramps_person_id}")
+        print(f"Total facts provided: {len(facts)}")
+
         relationships = []
 
         # Get relationship facts
         rel_facts = [f for f in facts if f.fact_type in ['relationship', 'marriage', 'survived_by', 'preceded_in_death']]
 
+        print(f"Relationship facts found: {len(rel_facts)}")
+        for fact in rel_facts:
+            print(f"  - {fact.fact_type}: {fact.relationship_type} to '{fact.related_name}'")
+
         for fact in rel_facts:
             if not fact.related_name:
+                print(f"  SKIP: No related_name for fact {fact.id}")
                 continue
 
+            print(f"\nProcessing: {fact.relationship_type} to '{fact.related_name}'")
+
             # Find if related person is in Gramps
+            # First try exact canonical_name match
             related_cluster = self.db.query(PersonCluster).filter(
                 PersonCluster.canonical_name == fact.related_name
             ).first()
 
-            if not related_cluster or not related_cluster.gramps_person_id:
-                # Related person not in Gramps yet
+            # If not found, try matching against name_variants
+            if not related_cluster:
+                all_clusters = self.db.query(PersonCluster).all()
+                for cluster in all_clusters:
+                    name_variants = json.loads(cluster.name_variants) if cluster.name_variants else [cluster.canonical_name]
+                    if fact.related_name in name_variants:
+                        related_cluster = cluster
+                        print(f"  Found via name_variants: {cluster.canonical_name}")
+                        break
+                    # Also try partial match (e.g., "Terrence Kaczmarowski" in "Terrence E. Kaczmarowski")
+                    for variant in name_variants:
+                        if fact.related_name.lower() in variant.lower() or variant.lower() in fact.related_name.lower():
+                            related_cluster = cluster
+                            print(f"  Found via partial match: '{fact.related_name}' ~ '{variant}'")
+                            break
+                    if related_cluster:
+                        break
+
+            if not related_cluster:
+                print(f"  NOT FOUND: No cluster matches '{fact.related_name}'")
                 continue
+
+            if not related_cluster.gramps_person_id:
+                print(f"  SKIP: Cluster found but no gramps_person_id (not in Gramps yet)")
+                continue
+
+            print(f"  FOUND: Cluster {related_cluster.id} with gramps_person_id = {related_cluster.gramps_person_id}")
 
             # Get related person's handle
             related_person = self.gramps.get_person(related_cluster.gramps_person_id)

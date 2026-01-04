@@ -198,11 +198,15 @@ class CitationService:
         citation_handle = gramps_citation.get('handle')
 
         # Add citation to person in Gramps
+        # TODO: Fix Gramps API 400 error - temporarily disabled
         if citation_handle:
-            self.gramps.add_citation_to_person(
-                person_handle=gramps_handle,
-                citation_handle=citation_handle
-            )
+            print(f"WARNING: Citation linking temporarily disabled due to Gramps API issue")
+            print(f"  Citation {gramps_citation_id} created but not linked to person {gramps_person_id}")
+            # Skip the linking for now - citations exist but aren't linked to people
+            # self.gramps.add_citation_to_person(
+            #     person_handle=gramps_handle,
+            #     citation_handle=citation_handle
+            # )
 
         # Record in our database (with denormalized obituary_name for audit trail)
         local_citation = GrampsCitation(

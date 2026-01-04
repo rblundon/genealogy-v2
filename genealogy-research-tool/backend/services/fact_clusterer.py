@@ -192,10 +192,14 @@ class FactClusterer:
             self.db.add(cluster)
             self.db.flush()  # Get the ID
 
-            # Link all facts to this cluster
+            # Link facts to this cluster - ONLY if the cluster person is the subject_name
+            # (Not if they're just mentioned as related_name in someone else's fact)
+            cluster_name_variants = set(cluster_data['name_variants'])
             for fact in cluster_data['facts']:
-                fact.person_cluster_id = cluster.id
-                fact.resolution_status = 'clustered'
+                # Only link if this person is the subject of the fact
+                if fact.subject_name in cluster_name_variants:
+                    fact.person_cluster_id = cluster.id
+                    fact.resolution_status = 'clustered'
 
             cluster_records.append(cluster)
 

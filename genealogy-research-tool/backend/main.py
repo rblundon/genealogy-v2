@@ -737,6 +737,48 @@ async def get_gramps_audit_trail(
     }
 
 
+@app.get("/api/gramps/person/{person_id}/debug")
+async def debug_gramps_person(person_id: str):
+    """
+    Get full Gramps person record for debugging.
+
+    Shows all names, events, and raw data to debug issues.
+    """
+    gramps = GrampsClient()
+    person = gramps.get_person(person_id)
+
+    if not person:
+        raise HTTPException(status_code=404, detail=f"Person {person_id} not found")
+
+    # Get events from event_ref_list
+    events = []
+    for event_ref in person.get('event_ref_list', []):
+        event_handle = event_ref.get('ref')
+        if event_handle:
+            try:
+                event = gramps._request('GET', f'/events/{event_handle}')
+                events.append({
+                    'handle': event_handle,
+                    'type': event.get('type'),
+                    'date': event.get('date'),
+                    'place': event.get('place'),
+                    'raw': event
+                })
+            except:
+                events.append({'handle': event_handle, 'error': 'Failed to fetch'})
+
+    return {
+        'person_id': person_id,
+        'handle': person.get('handle'),
+        'gramps_id': person.get('gramps_id'),
+        'primary_name': person.get('primary_name'),
+        'alternate_names': person.get('alternate_names'),
+        'event_ref_list': person.get('event_ref_list'),
+        'events_resolved': events,
+        'full_record': person
+    }
+
+
 # ============================================================================
 # PERSON CREATION ENDPOINTS (Phase 3 Stage 3)
 # ============================================================================

@@ -173,7 +173,7 @@ class GrampsClient:
         Get a specific person by handle or Gramps ID.
 
         Args:
-            identifier: Gramps handle or person ID
+            identifier: Gramps handle or person ID (e.g., "I0090")
 
         Returns:
             Person object or None if not found
@@ -182,7 +182,21 @@ class GrampsClient:
             # Try as handle first (Gramps Web API uses handles)
             return self._request('GET', f'/people/{identifier}')
         except:
-            return None
+            pass
+
+        # If that failed and identifier looks like a gramps_id (starts with I),
+        # search for the person by gramps_id
+        if identifier.startswith('I'):
+            try:
+                # Search for all people and find by gramps_id
+                people = self._request('GET', '/people/')
+                for person in people:
+                    if person.get('gramps_id') == identifier:
+                        return person
+            except:
+                pass
+
+        return None
 
     def get_person_events(self, handle: str) -> List[Dict]:
         """
@@ -588,11 +602,11 @@ class GrampsClient:
         Returns:
             Created person object with gramps_id and handle
         """
-        # Build primary name
+        # Build primary name - use simple string for type
         primary_name = {
             'first_name': given_name,
             'surname_list': [{'surname': surname}],
-            'type': {'_class': 'NameType', 'string': 'Birth Name'}
+            'type': 'Birth Name'  # Simple string, not dict
         }
 
         # Map gender to Gramps format (0=Female, 1=Male, 2=Unknown)
@@ -626,6 +640,7 @@ class GrampsClient:
 
             # Add birth event if date provided
             if birth_date:
+                print(f"DEBUG: Creating BIRTH event with date={birth_date}")
                 self._add_event_to_person(
                     person_handle=person_handle,
                     event_type='Birth',
@@ -635,6 +650,7 @@ class GrampsClient:
 
             # Add death event if date provided
             if death_date:
+                print(f"DEBUG: Creating DEATH event with date={death_date}")
                 self._add_event_to_person(
                     person_handle=person_handle,
                     event_type='Death',
@@ -668,11 +684,13 @@ class GrampsClient:
         Returns:
             True if successful
         """
+        print(f"DEBUG: _add_event_to_person called with event_type='{event_type}', date='{date}'")
         try:
-            # Create event
+            # Create event - use simple string for type (not dict)
             event_data = {
-                'type': {'_class': 'EventType', 'string': event_type}
+                'type': event_type  # Simple string: 'Birth', 'Death', etc.
             }
+            print(f"DEBUG: Event data being sent: {event_data}")
 
             # Add date if provided
             if date:
@@ -812,11 +830,11 @@ class GrampsClient:
 
             alt_names = person.get('alternate_names', [])
 
-            # Add new alternate name
+            # Add new alternate name - use simple string for type
             alt_names.append({
                 'first_name': given_name,
                 'surname_list': [{'surname': surname}],
-                'type': {'_class': 'NameType', 'string': name_type}
+                'type': name_type  # Simple string: 'Married Name', 'Also Known As', etc.
             })
 
             # Update person - must send full object for PUT
