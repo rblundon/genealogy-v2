@@ -154,7 +154,10 @@ class CitationService:
         if not obituary:
             return {'success': False, 'error': 'Obituary not found'}
 
-        # Get the deceased primary person name from facts
+        # Get the primary deceased person's name for source title
+        # Try multiple strategies to find the deceased name
+
+        # Strategy 1: Look for deceased_primary role
         primary_fact = self.db.query(ExtractedFact).filter(
             and_(
                 ExtractedFact.obituary_cache_id == obituary_cache_id,
@@ -163,21 +166,63 @@ class CitationService:
             )
         ).first()
 
-        deceased_name = primary_fact.fact_value if primary_fact else "Unknown"
+        if primary_fact:
+            deceased_name = primary_fact.fact_value
+        else:
+            # Strategy 2: Use the cluster name if this is being called for a specific person
+            if cluster_id:
+                cluster = self.db.query(PersonCluster).filter(
+                    PersonCluster.id == cluster_id
+                ).first()
+                deceased_name = cluster.canonical_name if cluster else "Unknown"
+            else:
+                # Strategy 3: Get any person from this obituary
+                any_person = self.db.query(ExtractedFact).filter(
+                    and_(
+                        ExtractedFact.obituary_cache_id == obituary_cache_id,
+                        ExtractedFact.fact_type == 'person_name'
+                    )
+                ).first()
+                deceased_name = any_person.fact_value if any_person else "Unknown"
 
-        # Create or find source in Gramps
-        source_title = f"Obituary of {deceased_name}"
-        source_result = self.gramps.find_or_create_source(
-            title=source_title,
-            url=obituary.url,
-            author=None,
-            pubinfo=None
-        )
+        print(f"DEBUG: Source title will be 'Obituary of {deceased_name}'")
 
-        if not source_result:
-            return {'success': False, 'error': 'Failed to create source in Gramps'}
+        # Check if we already created a source for this obituary
+        existing_citation = self.db.query(GrampsCitation).filter(
+            GrampsCitation.obituary_cache_id == obituary_cache_id
+        ).first()
 
-        gramps_source_id, source_handle = source_result
+        if existing_citation and existing_citation.gramps_source_id:
+            # Reuse existing source - need to get handle for citation creation
+            gramps_source_id = existing_citation.gramps_source_id
+            # Fetch source to get handle
+            try:
+                sources = self.gramps._request('GET', '/sources/')
+                if isinstance(sources, dict) and 'data' in sources:
+                    sources = sources['data']
+                source_handle = None
+                for source in sources:
+                    if source.get('gramps_id') == gramps_source_id:
+                        source_handle = source.get('handle')
+                        break
+            except:
+                source_handle = None
+            print(f"✓ Reusing existing source {gramps_source_id} for obituary {obituary_cache_id}")
+        else:
+            # Create new source in Gramps
+            source_title = f"Obituary of {deceased_name}"
+            source_result = self.gramps.find_or_create_source(
+                title=source_title,
+                url=obituary.url,
+                author=None,
+                pubinfo=None
+            )
+
+            if not source_result:
+                return {'success': False, 'error': 'Failed to create source in Gramps'}
+
+            gramps_source_id, source_handle = source_result
+            print(f"✓ Created new source {gramps_source_id} for obituary {obituary_cache_id}")
 
         # Create citation in Gramps
         citation_note = f"Extracted from obituary: {deceased_name}"

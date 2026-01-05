@@ -540,7 +540,7 @@ class GrampsClient:
             if not isinstance(sources, list):
                 sources = []
 
-            # Check if any match our URL
+            # Check if any match our URL (exact match in attributes)
             for source in sources:
                 if not isinstance(source, dict):
                     continue
@@ -553,7 +553,30 @@ class GrampsClient:
                     else:
                         type_str = str(attr_type)
                     if type_str == 'URL' and attr.get('value') == url:
-                        return (source.get('gramps_id'), source.get('handle'))
+                        gramps_id = source.get('gramps_id')
+                        handle = source.get('handle')
+                        print(f"✓ Found existing source {gramps_id} by URL attribute: {url}")
+                        return (gramps_id, handle)
+
+            # Also check pubinfo field for URL
+            for source in sources:
+                if not isinstance(source, dict):
+                    continue
+                if source.get('pubinfo') == url:
+                    gramps_id = source.get('gramps_id')
+                    handle = source.get('handle')
+                    print(f"✓ Found existing source {gramps_id} by pubinfo URL: {url}")
+                    return (gramps_id, handle)
+
+                # Also check if URL is in title (backup check)
+                source_title = source.get('title', '')
+                if url and url in source_title:
+                    gramps_id = source.get('gramps_id')
+                    handle = source.get('handle')
+                    print(f"✓ Found existing source {gramps_id} by title containing URL")
+                    return (gramps_id, handle)
+
+            print(f"✓ No existing source found for URL: {url}, creating new...")
 
             # Not found, create new
             new_source = self.create_source(

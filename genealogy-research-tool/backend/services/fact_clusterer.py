@@ -157,6 +157,8 @@ class FactClusterer:
         # First, clear any existing cluster assignments
         self.db.query(ExtractedFact).update({
             ExtractedFact.person_cluster_id: None,
+            ExtractedFact.subject_cluster_id: None,
+            ExtractedFact.related_cluster_id: None,
             ExtractedFact.resolution_status: 'unresolved'
         })
 
@@ -192,14 +194,18 @@ class FactClusterer:
             self.db.add(cluster)
             self.db.flush()  # Get the ID
 
-            # Link facts to this cluster - ONLY if the cluster person is the subject_name
-            # (Not if they're just mentioned as related_name in someone else's fact)
+            # Link facts to this cluster
             cluster_name_variants = set(cluster_data['name_variants'])
             for fact in cluster_data['facts']:
-                # Only link if this person is the subject of the fact
+                # Set subject_cluster_id if this person is the subject of the fact
                 if fact.subject_name in cluster_name_variants:
                     fact.person_cluster_id = cluster.id
+                    fact.subject_cluster_id = cluster.id
                     fact.resolution_status = 'clustered'
+
+                # Set related_cluster_id if this person is mentioned as related_name
+                if fact.related_name and fact.related_name in cluster_name_variants:
+                    fact.related_cluster_id = cluster.id
 
             cluster_records.append(cluster)
 
@@ -261,7 +267,10 @@ class FactClusterer:
                         'confidence': float(f.confidence_score),
                         'is_inferred': f.is_inferred,
                         'extracted_context': f.extracted_context,
-                        'obituary_id': f.obituary_cache_id
+                        'obituary_id': f.obituary_cache_id,
+                        'subject_cluster_id': f.subject_cluster_id,
+                        'related_name': f.related_name,
+                        'related_cluster_id': f.related_cluster_id
                     }
                     for f in facts_list
                 ]

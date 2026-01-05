@@ -35,6 +35,7 @@ class ExtractedFact(Base):
     )
 
     subject_name = Column(String(255), nullable=False, index=True)
+    subject_cluster_id = Column(Integer, ForeignKey('person_clusters.id', ondelete='SET NULL'), index=True)
     subject_role = Column(
         Enum(
             'deceased_primary',
@@ -55,6 +56,7 @@ class ExtractedFact(Base):
     fact_value = Column(Text, nullable=False)
 
     related_name = Column(String(255))
+    related_cluster_id = Column(Integer, ForeignKey('person_clusters.id', ondelete='SET NULL'), index=True)
     relationship_type = Column(String(100))
 
     extracted_context = Column(Text)
@@ -82,6 +84,19 @@ class ExtractedFact(Base):
     # Relationships
     obituary = relationship("ObituaryCache", back_populates="extracted_facts")
 
+    # Cluster relationships
+    subject_cluster = relationship(
+        "PersonCluster",
+        foreign_keys=[subject_cluster_id],
+        backref="facts_as_subject"
+    )
+
+    related_cluster = relationship(
+        "PersonCluster",
+        foreign_keys=[related_cluster_id],
+        backref="facts_as_related"
+    )
+
     def __repr__(self):
         return (f"<ExtractedFact(id={self.id}, type='{self.fact_type}', "
                 f"subject='{self.subject_name}', confidence={self.confidence_score})>")
@@ -92,9 +107,11 @@ class ExtractedFact(Base):
             'id': self.id,
             'fact_type': self.fact_type,
             'subject_name': self.subject_name,
+            'subject_cluster_id': self.subject_cluster_id,
             'subject_role': self.subject_role,
             'fact_value': self.fact_value,
             'related_name': self.related_name,
+            'related_cluster_id': self.related_cluster_id,
             'relationship_type': self.relationship_type,
             'extracted_context': self.extracted_context,
             'is_inferred': self.is_inferred,

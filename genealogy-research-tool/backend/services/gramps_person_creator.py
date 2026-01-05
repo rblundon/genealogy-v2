@@ -315,12 +315,25 @@ class PersonCreator:
             print(f"\nProcessing: {fact.relationship_type} to '{fact.related_name}'")
 
             # Find if related person is in Gramps
-            # First try exact canonical_name match
-            related_cluster = self.db.query(PersonCluster).filter(
-                PersonCluster.canonical_name == fact.related_name
-            ).first()
+            related_cluster = None
 
-            # If not found, try matching against name_variants
+            # First, use related_cluster_id if set (most reliable)
+            if fact.related_cluster_id:
+                related_cluster = self.db.query(PersonCluster).filter(
+                    PersonCluster.id == fact.related_cluster_id
+                ).first()
+                if related_cluster:
+                    print(f"  Found via related_cluster_id: {related_cluster.canonical_name}")
+
+            # Fallback: try exact canonical_name match
+            if not related_cluster:
+                related_cluster = self.db.query(PersonCluster).filter(
+                    PersonCluster.canonical_name == fact.related_name
+                ).first()
+                if related_cluster:
+                    print(f"  Found via canonical_name match")
+
+            # Fallback: try matching against name_variants
             if not related_cluster:
                 all_clusters = self.db.query(PersonCluster).all()
                 for cluster in all_clusters:
