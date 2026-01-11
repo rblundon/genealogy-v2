@@ -24,6 +24,7 @@ class ObituaryCache(Base):
         default='pending',
         index=True
     )
+    gramps_source_id = Column(String(50), index=True)
 
     # Relationships
     extracted_facts = relationship("ExtractedFact", back_populates="obituary",

@@ -7,6 +7,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.1] - 2026-01-10
+
+### Undetected Playwright for Cloudflare Bypass
+
+#### Added
+- **Undetected Playwright integration** for Cloudflare bypass
+  - Uses patched Chromium to avoid bot detection
+  - Stealth browser settings (disable automation flags, realistic headers)
+  - Startup verification with clear error messages if not installed
+
+#### Changed
+- Replaced standard `playwright` with `undetected-playwright`
+- Legacy.com extraction runs inline (no subprocess needed)
+- Realistic browser fingerprinting (viewport, user-agent, HTTP headers)
+- Automatic `navigator.webdriver` flag removal
+
+#### Technical Details
+- Uses `--disable-blink-features=AutomationControlled` flag
+- Realistic HTTP headers to mimic human browser
+- 3-second wait for JavaScript content rendering
+- Multiple CSS selector fallbacks for content extraction
+
+#### Fixed
+- **Cloudflare bot detection bypassed** using undetected-playwright
+- JavaScript-rendered content extraction now works
+
+---
+
+## [1.2.0] - 2026-01-09
+
+### Phase 3 Stage 4 - URL-Based Obituary Processing
+
+#### Added
+- **URL-Based Processing** (`/api/obituaries/process`)
+  - Smart detection: URL+text or URL-only input
+  - Automatic web scraping with Playwright (JavaScript support)
+  - Legacy.com support with site-specific extractors
+
+- **URL Validator Service** (`url_validator.py`)
+  - Validates obituary URLs from supported sites
+  - Extensible architecture for future site support
+
+- **Obituary Fetcher Service** (`obituary_fetcher.py`)
+  - Web scraping with rate limiting (2-second delay)
+  - Playwright-based extraction for JavaScript-rendered content
+  - Error handling for 404, 403, 429, timeouts
+
+- **Cache Intelligence**
+  - Cache hit returns existing data with zero LLM cost
+  - Failed fetches automatically retry on next request
+  - Status tracking: pending, processing, completed, failed
+
+- **Source Tracking**
+  - `gramps_source_id` column in `obituary_cache` table
+  - Track which obituaries have Gramps sources created
+
+- **Documentation**
+  - `docs/BACKLOG.md` - Future feature backlog
+
+#### Changed
+- `ProcessObituaryRequest.obituary_text` is now optional
+- If omitted, content is fetched from URL automatically
+
+#### Fixed
+- Duplicate source creation (one source per obituary URL)
+- Source titles now show deceased person's name
+- Cluster ID tracking in extracted facts
+
+---
+
+## [1.1.0] - 2026-01-04
+
+### Phase 3 Stage 3 Fixes
+
+#### Added
+- **Cluster ID Enhancement**
+  - `subject_cluster_id` and `related_cluster_id` columns in `extracted_facts`
+  - Foreign key relationships to `person_clusters`
+  - Direct cluster lookup instead of name-based matching
+
+#### Fixed
+- Relationship creation now uses `related_cluster_id` for reliable lookup
+- API responses include cluster IDs in fact data
+
+---
+
 ## [1.0.0] - 2026-01-03
 
 ### Phase 3 Stage 3 Complete - Person Creation in Gramps Web
@@ -124,6 +210,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 | Version | Date | Phase | Description |
 |---------|------|-------|-------------|
+| 1.2.1 | 2026-01-10 | 3.4+ | Undetected Playwright for Cloudflare bypass |
+| 1.2.0 | 2026-01-09 | 3.4 | URL-based obituary processing |
+| 1.1.0 | 2026-01-04 | 3.3+ | Cluster ID tracking fixes |
 | 1.0.0 | 2026-01-03 | 3.3 | Person creation with relationships |
 | 0.3.0 | 2026-01-03 | 3.2 | Citation creation |
 | 0.2.5 | 2026-01-03 | 2.5 | Debugging & fixes |

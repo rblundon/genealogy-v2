@@ -224,6 +224,11 @@ class CitationService:
             gramps_source_id, source_handle = source_result
             print(f"✓ Created new source {gramps_source_id} for obituary {obituary_cache_id}")
 
+            # Update obituary_cache with gramps_source_id for tracking
+            if obituary and not obituary.gramps_source_id:
+                obituary.gramps_source_id = gramps_source_id
+                print(f"✓ Updated obituary {obituary_cache_id} with Gramps source {gramps_source_id}")
+
         # Create citation in Gramps
         citation_note = f"Extracted from obituary: {deceased_name}"
 

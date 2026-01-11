@@ -16,8 +16,15 @@ from services.gramps_client import GrampsClient
 from services.gramps_matcher import GrampsMatcher
 from services.gramps_citation_service import CitationService
 from services.gramps_person_creator import PersonCreator
+from services.url_validator import URLValidator
+from services.obituary_fetcher import ObituaryFetcher
 from utils.hash_utils import hash_url
+from sqlalchemy import func
 import json
+
+# Verify undetected-playwright installation at startup
+if not ObituaryFetcher.verify_installation():
+    print("WARNING: Legacy.com scraping will not work until undetected-playwright is installed")
 
 app = FastAPI(
     title="Genealogy Research Tool API",
@@ -66,8 +73,8 @@ async def reset_database(db: Session = Depends(get_db)):
 
 class ProcessObituaryRequest(BaseModel):
     """Request to process an obituary"""
-    obituary_text: str
-    source_url: str = "http://test.obituary/manual"
+    source_url: str
+    obituary_text: Optional[str] = None  # Optional: if omitted, will fetch from URL
 
 
 class PersonInfo(BaseModel):
@@ -147,67 +154,182 @@ async def root():
     }
 
 
-@app.post("/api/obituaries/process", response_model=ProcessObituaryResponse)
+@app.post("/api/obituaries/process")
 async def process_obituary(
     request: ProcessObituaryRequest,
     db: Session = Depends(get_db)
 ):
     """
-    Process an obituary: extract person mentions and facts.
+    Process an obituary from URL or text.
 
-    Phase 1: Accepts obituary text directly (no web fetching yet)
+    Smart detection:
+    - If obituary_text provided: Use text (skip fetch)
+    - If obituary_text omitted: Fetch from source_url
+
+    Cache behavior:
+    - If URL already processed (status=completed): Return cached data
+    - If URL failed before (status=failed): Retry processing
+    - If URL is processing: Return current status
+    - If new URL: Fetch, extract, store
     """
-
-    url_hash_value = hash_url(request.source_url)
-
-    # Check cache
-    cached_obit = db.query(ObituaryCache).filter(
-        ObituaryCache.url_hash == url_hash_value
-    ).first()
-
-    cache_hit = cached_obit is not None
-
-    if cached_obit:
-        obituary = cached_obit
-        print(f"Cache hit for {request.source_url}")
-    else:
-        # Create new obituary record
-        obituary = ObituaryCache(
-            url=request.source_url,
-            url_hash=url_hash_value,
-            extracted_text=request.obituary_text,
-            processing_status='processing'
-        )
-        db.add(obituary)
-        db.commit()
-        db.refresh(obituary)
-        print(f"Processing new obituary: {request.source_url}")
-
-    # Extract facts
     try:
+        # Validate URL
+        validator = URLValidator()
+        validation = validator.validate_url(request.source_url)
+
+        if not validation['valid']:
+            return {
+                'status': 'error',
+                'error': validation['error']
+            }
+
+        site = validation['site']
+        url = validation['url']
+        url_hash_value = hash_url(url)
+
+        # Check cache
+        cached = db.query(ObituaryCache).filter(
+            ObituaryCache.url_hash == url_hash_value
+        ).first()
+
+        # CACHE HIT - Status: completed
+        if cached and cached.processing_status == 'completed':
+            # Count extracted facts
+            fact_count = db.query(ExtractedFact).filter(
+                ExtractedFact.obituary_cache_id == cached.id
+            ).count()
+
+            person_count = db.query(func.count(func.distinct(ExtractedFact.subject_name))).filter(
+                ExtractedFact.obituary_cache_id == cached.id
+            ).scalar()
+
+            return {
+                'status': 'success',
+                'cache_hit': True,
+                'obituary_id': cached.id,
+                'processing_status': 'completed',
+                'persons_extracted': person_count or 0,
+                'facts_extracted': fact_count,
+                'llm_cost_usd': 0.00,
+                'message': 'Using cached obituary - no fetch or processing needed'
+            }
+
+        # CACHE HIT - Status: processing
+        if cached and cached.processing_status == 'processing':
+            return {
+                'status': 'info',
+                'cache_hit': True,
+                'obituary_id': cached.id,
+                'processing_status': 'processing',
+                'message': 'Obituary is currently being processed. Please check back shortly.'
+            }
+
+        # NEW or FAILED - Process obituary
+
+        # Determine if we need to fetch
+        need_fetch = (request.obituary_text is None or request.obituary_text.strip() == '')
+
+        if need_fetch:
+            # Fetch from URL
+            fetcher = ObituaryFetcher()
+            fetch_result = fetcher.fetch(url, site)
+
+            if not fetch_result['success']:
+                # Store failed fetch in cache
+                if cached:
+                    cached.processing_status = 'failed'
+                    cached.fetch_error = fetch_result['error']
+                    cached.http_status_code = fetch_result['http_status_code']
+                else:
+                    cached = ObituaryCache(
+                        url=url,
+                        url_hash=url_hash_value,
+                        processing_status='failed',
+                        fetch_error=fetch_result['error'],
+                        http_status_code=fetch_result['http_status_code']
+                    )
+                    db.add(cached)
+
+                db.commit()
+
+                return {
+                    'status': 'error',
+                    'error': fetch_result['error'],
+                    'http_status_code': fetch_result['http_status_code']
+                }
+
+            # Success - use fetched content
+            raw_html = fetch_result['raw_html']
+            extracted_text = fetch_result['extracted_text']
+            content_hash_value = fetch_result['content_hash']
+            http_status = fetch_result['http_status_code']
+        else:
+            # Use provided text
+            raw_html = None
+            extracted_text = request.obituary_text
+            content_hash_value = hash_url(extracted_text)  # Reuse hash function
+            http_status = None
+
+        # Create or update cache entry
+        if cached:
+            # Update existing
+            cached.raw_html = raw_html
+            cached.extracted_text = extracted_text
+            cached.content_hash = content_hash_value
+            cached.http_status_code = http_status
+            cached.processing_status = 'processing'
+            cached.fetch_error = None
+        else:
+            # Create new
+            cached = ObituaryCache(
+                url=url,
+                url_hash=url_hash_value,
+                content_hash=content_hash_value,
+                raw_html=raw_html,
+                extracted_text=extracted_text,
+                http_status_code=http_status,
+                processing_status='processing'
+            )
+            db.add(cached)
+
+        db.commit()
+        db.refresh(cached)
+
+        obituary_id = cached.id
+
+        # Extract facts with LLM
         result = await process_obituary_full(
             db,
-            obituary.id,
-            obituary.extracted_text
+            obituary_id,
+            extracted_text
         )
 
-        # Update status
-        obituary.processing_status = 'completed'
+        # Success!
+        cached.processing_status = 'completed'
         db.commit()
 
-        return ProcessObituaryResponse(
-            obituary_id=obituary.id,
-            persons_extracted=result['persons_extracted'],
-            facts_extracted=result['facts_extracted'],
-            cache_hit=cache_hit,
-            persons=result['persons'],
-            facts=result['facts']
-        )
+        return {
+            'status': 'success',
+            'cache_hit': False,
+            'obituary_id': obituary_id,
+            'processing_status': 'completed',
+            'persons_extracted': result.get('persons_extracted', 0),
+            'facts_extracted': result.get('facts_extracted', 0),
+            'llm_cost_usd': result.get('cost_usd', 0.0),
+            'processing_time_ms': result.get('processing_time_ms', 0)
+        }
 
     except Exception as e:
-        obituary.processing_status = 'failed'
-        db.commit()
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback
+        traceback.print_exc()
+        if 'cached' in locals() and cached:
+            cached.processing_status = 'failed'
+            cached.fetch_error = str(e)
+            db.commit()
+        return {
+            'status': 'error',
+            'error': f'Unexpected error: {str(e)}'
+        }
 
 
 @app.get("/api/obituaries/{obituary_id}/facts", response_model=ObituaryFactsResponse)
