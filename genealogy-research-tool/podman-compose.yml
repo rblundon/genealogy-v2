@@ -53,6 +53,25 @@ services:
       - "8000:8000"
     command: uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: genealogy-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      VITE_API_URL: http://localhost:8000
+    volumes:
+      - ./frontend:/app:rw
+      - /app/node_modules  # Preserve container node_modules
+    networks:
+      - genealogy-net
+    ports:
+      - "5173:5173"
+    command: npm run dev -- --host 0.0.0.0
+
 networks:
   genealogy-net:
     driver: bridge

@@ -32,11 +32,11 @@ app = FastAPI(
     description="Extract genealogical facts from obituaries using LLM technology"
 )
 
-# CORS
+# CORS - allow all origins for development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,  # Must be False when using allow_origins=["*"]
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -330,6 +330,41 @@ async def process_obituary(
             'status': 'error',
             'error': f'Unexpected error: {str(e)}'
         }
+
+
+@app.get("/api/obituaries/{obituary_id}")
+async def get_obituary(
+    obituary_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get obituary status and details by ID"""
+
+    obituary = db.query(ObituaryCache).filter(
+        ObituaryCache.id == obituary_id
+    ).first()
+
+    if not obituary:
+        raise HTTPException(status_code=404, detail=f"Obituary {obituary_id} not found")
+
+    # Count facts and persons
+    facts_count = db.query(ExtractedFact).filter(
+        ExtractedFact.obituary_cache_id == obituary_id
+    ).count()
+
+    persons_count = db.query(func.count(func.distinct(ExtractedFact.subject_name))).filter(
+        ExtractedFact.obituary_cache_id == obituary_id
+    ).scalar() or 0
+
+    return {
+        "id": obituary.id,
+        "url": obituary.url,
+        "processing_status": obituary.processing_status or "completed",
+        "fetch_error": obituary.fetch_error,
+        "persons_extracted": persons_count,
+        "facts_extracted": facts_count,
+        "fetch_timestamp": obituary.fetch_timestamp.isoformat() if obituary.fetch_timestamp else None,
+        "llm_cost_usd": 0.0,  # TODO: Track actual LLM costs
+    }
 
 
 @app.get("/api/obituaries/{obituary_id}/facts", response_model=ObituaryFactsResponse)
