@@ -44,3 +44,52 @@ export async function getObituaryStatus(obituaryId) {
 
   return response.json();
 }
+
+/**
+ * Get all obituaries
+ * @returns {Promise<Array>} List of obituaries
+ */
+export async function getAllObituaries() {
+  const response = await fetch(`${API_BASE_URL}/api/obituaries`);
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to fetch obituaries');
+  }
+
+  return response.json();
+}
+
+/**
+ * Get facts for an obituary
+ * @param {number} obituaryId - The obituary ID
+ * @returns {Promise<{obituary_id: number, fact_count: number, facts: Array}>}
+ */
+export async function getObituaryFacts(obituaryId) {
+  const response = await fetch(`${API_BASE_URL}/api/obituaries/${obituaryId}/facts`);
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to fetch facts');
+  }
+
+  return response.json();
+}
+
+/**
+ * Delete an obituary
+ * @param {number} obituaryId - The obituary ID
+ * @returns {Promise<void>}
+ */
+export async function deleteObituary(obituaryId) {
+  const response = await fetch(`${API_BASE_URL}/api/obituaries/${obituaryId}`, {
+    method: 'DELETE',
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to delete obituary');
+  }
+
+  return response.json();
+}

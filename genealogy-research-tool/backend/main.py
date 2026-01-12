@@ -364,7 +364,30 @@ async def get_obituary(
         "facts_extracted": facts_count,
         "fetch_timestamp": obituary.fetch_timestamp.isoformat() if obituary.fetch_timestamp else None,
         "llm_cost_usd": 0.0,  # TODO: Track actual LLM costs
+        "extracted_text": obituary.extracted_text,
+        "http_status_code": obituary.http_status_code,
     }
+
+
+@app.delete("/api/obituaries/{obituary_id}")
+async def delete_obituary(
+    obituary_id: int,
+    db: Session = Depends(get_db)
+):
+    """Delete an obituary and all associated data"""
+    obituary = db.query(ObituaryCache).filter(ObituaryCache.id == obituary_id).first()
+
+    if not obituary:
+        raise HTTPException(status_code=404, detail="Obituary not found")
+
+    # Delete related facts first
+    db.query(ExtractedFact).filter(ExtractedFact.obituary_cache_id == obituary_id).delete()
+
+    # Delete the obituary
+    db.delete(obituary)
+    db.commit()
+
+    return {"status": "success", "message": "Obituary deleted"}
 
 
 @app.get("/api/obituaries/{obituary_id}/facts", response_model=ObituaryFactsResponse)
@@ -396,25 +419,30 @@ async def get_obituary_facts(
 @app.get("/api/obituaries")
 async def list_obituaries(
     db: Session = Depends(get_db),
-    limit: int = 10,
+    limit: int = 100,
     offset: int = 0
 ):
     """List all processed obituaries"""
 
     obituaries = db.query(ObituaryCache).offset(offset).limit(limit).all()
 
-    return {
-        "count": len(obituaries),
-        "obituaries": [
-            {
-                "id": o.id,
-                "url": o.url,
-                "processing_status": o.processing_status,
-                "fetch_timestamp": o.fetch_timestamp.isoformat() if o.fetch_timestamp else None
-            }
-            for o in obituaries
-        ]
-    }
+    result = []
+    for o in obituaries:
+        # Count persons for this obituary
+        persons_count = db.query(func.count(func.distinct(ExtractedFact.subject_name))).filter(
+            ExtractedFact.obituary_cache_id == o.id
+        ).scalar() or 0
+
+        result.append({
+            "id": o.id,
+            "url": o.url,
+            "processing_status": o.processing_status,
+            "fetch_timestamp": o.fetch_timestamp.isoformat() if o.fetch_timestamp else None,
+            "persons_extracted": persons_count,
+            "llm_cost_usd": 0.0  # TODO: Track actual LLM costs
+        })
+
+    return result
 
 
 @app.get("/api/facts/by-person/{person_name}")
