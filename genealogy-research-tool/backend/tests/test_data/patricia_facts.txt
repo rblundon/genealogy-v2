@@ -1,0 +1,29 @@
+Patricia’s maiden name was Kaczmarowski [100]
+Patricia’s nickname was Patsy [100]
+Patricia died August 7, 2008 [100]
+Patricia was 57 years old [100]
+Patricia was married to Steven [100]
+Steven's last name is Blundon [100] (inferred)
+Ryan is son of Patricia and Steve [100] 
+Ryan’s last name is Blundon [100]
+Ryan is married to Amy [100]
+Amy’s last name is Blundon [100]
+Megan is daughter of Patricia and Steve [100]
+Megan’s maiden name is Blundon [100] (inferred as child of Patricia and Steve)
+Megan is married to Ross Wurz [100]
+Megan’s last name is Wurz [100] (inferred)
+Patricia is grandmother to Autumn [100] (we can not attribute parent or last name) (inferred parents are either: Ryan/Amy or Ross/Megan as they are the only relationships in the “middle generation”)
+Autumn's birth year can be approximate as her age is 5 [75]
+Patricia is grandmother to Caralyn [100] (we can not attribute parent or last name) (inferred parents are either: Ryan/Amy or Ross/Megan as they are the only relationships in the “middle generation”)
+Caralyn's birth year can be approximate as her age is 3 [75]
+Patricia’s father is Terrence Kaczmarowski [100]
+Patricia’s mother is Maxine Kaczmarowski [100]
+Patricia is sister-in-law of Marty (Katie) Blundon [100]
+Marty is Steven’s brother [100] (inferred)
+Marty is married to Katie [100]
+Katie’s last name is Blundon [100] (inferred)
+Patricia is sister-in-law of Monica (Ron) Clasen [100]
+Monica is Steven’s sister [100] (inferred)
+Monica’s last name is Blundon [100]
+Monica is married to Ron Clasen [100]
+Monica’s maiden name is Blundon [100] (inferred)
