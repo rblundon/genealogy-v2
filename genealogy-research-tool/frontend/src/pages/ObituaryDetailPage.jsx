@@ -212,12 +212,14 @@ export function ObituaryDetailPage() {
                   <li key={index} className="flex items-start">
                     <span className="text-gray-400 mr-2">•</span>
                     <span>
-                      <strong>{fact.fact_type}:</strong> {fact.fact_value}
-                      {fact.related_name && ` (${fact.related_name})`}
-                      {fact.confidence_score && (
+                      {fact.description || `${fact.fact_type}: ${fact.fact_value}`}
+                      {fact.confidence_score && fact.confidence_score < 1.0 && (
                         <span className="ml-2 text-xs text-gray-500">
                           ({(fact.confidence_score * 100).toFixed(0)}%)
                         </span>
+                      )}
+                      {fact.is_inferred && (
+                        <span className="ml-2 text-xs text-amber-600">(inferred)</span>
                       )}
                     </span>
                   </li>
@@ -230,12 +232,14 @@ export function ObituaryDetailPage() {
                   <li key={index} className="flex items-start">
                     <span className="text-gray-400 mr-2">•</span>
                     <span>
-                      <strong>{fact.fact_type}:</strong> {fact.fact_value}
-                      {fact.related_name && ` (${fact.related_name})`}
-                      {fact.confidence_score && (
+                      {fact.description || `${fact.fact_type}: ${fact.fact_value}`}
+                      {fact.confidence_score && fact.confidence_score < 1.0 && (
                         <span className="ml-2 text-xs text-gray-500">
                           ({(fact.confidence_score * 100).toFixed(0)}%)
                         </span>
+                      )}
+                      {fact.is_inferred && (
+                        <span className="ml-2 text-xs text-amber-600">(inferred)</span>
                       )}
                     </span>
                   </li>

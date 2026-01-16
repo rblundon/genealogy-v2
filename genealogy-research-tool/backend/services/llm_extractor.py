@@ -174,22 +174,240 @@ EXAMPLE - WRONG (do NOT do this):
   "relationship_type": "son"
 }}
 
+============================================================================
+SECTION 1: MARRIAGE EXTRACTION (CRITICAL - EXTRACT ALL MARRIAGES)
+============================================================================
+
+Extract marriage facts for EVERY couple mentioned, not just the deceased's spouse.
+
+**Parenthetical Spouse Pattern:**
+"Ryan (Amy)" means Ryan is married to Amy. Extract TWO facts:
+1. Ryan is married to Amy
+2. Amy is married to Ryan
+
+**Examples:**
+Text: "Mother of Ryan (Amy) and Megan (Ross) Wurz"
+Extract these marriage facts:
+- Ryan married to Amy (from parentheses)
+- Megan married to Ross Wurz (from parentheses)
+
+Text: "Sister-in-law of Marty (Katie) Blundon and Monica (Ron) Clasen"
+Extract these marriage facts:
+- Marty married to Katie
+- Monica married to Ron Clasen
+
+Text: "Brother-in-law of Reginald (Donna) Paradowski and Joseph (Rose Mary) Paradowski"
+Extract these marriage facts:
+- Reginald married to Donna
+- Joseph married to Rose Mary
+
+**Marriage Fact Format:**
+{{
+  "fact_type": "marriage",
+  "subject_name": "Ryan Blundon",
+  "subject_role": "child",
+  "fact_value": "spouse",
+  "related_name": "Amy Blundon",
+  "relationship_type": "wife",
+  "extracted_context": "Ryan (Amy)",
+  "is_inferred": false,
+  "confidence_score": 1.0
+}}
+
+============================================================================
+SECTION 2: SURNAME INFERENCE (CRITICAL)
+============================================================================
+
+Infer surnames based on family relationships:
+
+**Rule 1: Children inherit parent's surname**
+If Patricia Blundon is mother of Ryan, then Ryan's surname is Blundon.
+{{
+  "fact_type": "surname",
+  "subject_name": "Ryan Blundon",
+  "fact_value": "Blundon",
+  "extracted_context": "Mother of Ryan",
+  "is_inferred": true,
+  "inference_basis": "Child of Patricia Blundon inherits surname",
+  "confidence_score": 0.85
+}}
+
+**Rule 2: Spouses share surname (infer from known spouse)**
+If Ryan Blundon is married to Amy, Amy's surname is Blundon.
+{{
+  "fact_type": "surname",
+  "subject_name": "Amy Blundon",
+  "fact_value": "Blundon",
+  "extracted_context": "Ryan (Amy)",
+  "is_inferred": true,
+  "inference_basis": "Spouse of Ryan Blundon takes married name",
+  "confidence_score": 0.75
+}}
+
+**Rule 3: Married daughters - infer maiden name from parents**
+If Megan Wurz is daughter of Patricia Blundon, Megan's maiden name was Blundon.
+{{
+  "fact_type": "maiden_name",
+  "subject_name": "Megan Wurz",
+  "fact_value": "Blundon",
+  "extracted_context": "daughter Megan (Ross) Wurz",
+  "is_inferred": true,
+  "inference_basis": "Daughter of Patricia Blundon, maiden name from parents",
+  "confidence_score": 0.80
+}}
+
+============================================================================
+SECTION 3: DECEASED STATUS EXTRACTION (CRITICAL)
+============================================================================
+
+Extract deceased facts from these patterns:
+
+**Pattern 1: "the late [Name]"**
+"the late Patricia" → Patricia is deceased
+{{
+  "fact_type": "deceased",
+  "subject_name": "Patricia Blundon",
+  "fact_value": "true",
+  "extracted_context": "the late Patricia",
+  "is_inferred": false,
+  "confidence_score": 1.0
+}}
+
+**Pattern 2: "preceded in death by [Name]"**
+"preceded in death by her mother Mary" → Mary is deceased
+{{
+  "fact_type": "deceased",
+  "subject_name": "Mary",
+  "fact_value": "true",
+  "extracted_context": "preceded in death by her mother Mary",
+  "is_inferred": false,
+  "confidence_score": 1.0
+}}
+
+**Pattern 3: "reunited with [Name]"**
+"now reunited with her husband John" → John is deceased
+{{
+  "fact_type": "deceased",
+  "subject_name": "John",
+  "fact_value": "true",
+  "extracted_context": "reunited with her husband John",
+  "is_inferred": true,
+  "inference_basis": "Reunited implies previously deceased",
+  "confidence_score": 0.95
+}}
+
+**Pattern 4: The obituary subject is always deceased**
+Always create a deceased fact for the primary person.
+
+============================================================================
+SECTION 4: GRANDCHILD RELATIONSHIPS AND AGES
+============================================================================
+
+Extract ALL grandchild and great-grandchild relationships comprehensively.
+
+**When ages appear in parentheses, extract approximate birth year:**
+Text: "grandma of Autumn (5) and Caralyn (3)" (deceased died 2008)
+Extract:
+1. Grandchild relationship for Autumn
+2. Grandchild relationship for Caralyn
+3. Autumn's approximate birth year: 2003 (2008 - 5)
+4. Caralyn's approximate birth year: 2005 (2008 - 3)
+
+{{
+  "fact_type": "person_birth_year_approx",
+  "subject_name": "Autumn",
+  "fact_value": "2003",
+  "extracted_context": "Autumn (5)",
+  "is_inferred": true,
+  "inference_basis": "Age 5 at time of death (2008), birth year = 2008 - 5",
+  "confidence_score": 0.75
+}}
+
+**Grandchild relationship format:**
+{{
+  "fact_type": "relationship",
+  "subject_name": "Patricia Blundon",
+  "fact_value": "grandchild",
+  "related_name": "Autumn",
+  "relationship_type": "granddaughter",
+  "extracted_context": "grandma of Autumn (5)",
+  "is_inferred": false,
+  "confidence_score": 1.0
+}}
+
+============================================================================
+SECTION 5: IN-LAW INFERENCE (IMPORTANT)
+============================================================================
+
+When someone has in-laws, infer the sibling relationship to the spouse:
+
+**Pattern: "Sister-in-law of Marty" + Patricia married to Steven**
+→ Marty is Steven's sibling (brother or sister)
+
+{{
+  "fact_type": "relationship",
+  "subject_name": "Marty Blundon",
+  "fact_value": "sibling",
+  "related_name": "Steven Blundon",
+  "relationship_type": "brother",
+  "extracted_context": "Sister-in-law of Marty (Katie) Blundon",
+  "is_inferred": true,
+  "inference_basis": "Patricia's sister-in-law is spouse's sibling, Marty is Steven's brother",
+  "confidence_score": 0.85
+}}
+
+**Pattern: "Brother-in-law of Reginald" + Terrence married to Maxine**
+→ Reginald is Maxine's sibling
+
+{{
+  "fact_type": "relationship",
+  "subject_name": "Reginald Paradowski",
+  "fact_value": "sibling",
+  "related_name": "Maxine Kaczmarowski",
+  "relationship_type": "brother",
+  "extracted_context": "Brother-in-law of Reginald (Donna) Paradowski",
+  "is_inferred": true,
+  "inference_basis": "Terrence's brother-in-law is Maxine's brother",
+  "confidence_score": 0.85
+}}
+
+============================================================================
+SECTION 6: BIDIRECTIONAL RELATIONSHIPS
+============================================================================
+
+For every parent-child relationship, create facts in BOTH directions:
+
+If Patricia is mother of Ryan, extract:
+1. Patricia → Ryan (child relationship)
+2. Ryan → Patricia (parent relationship)
+
+{{
+  "fact_type": "relationship",
+  "subject_name": "Patricia Blundon",
+  "fact_value": "child",
+  "related_name": "Ryan Blundon",
+  "relationship_type": "son"
+}}
+
+{{
+  "fact_type": "relationship",
+  "subject_name": "Ryan Blundon",
+  "fact_value": "parent",
+  "related_name": "Patricia Blundon",
+  "relationship_type": "mother"
+}}
+
+Similarly for grandparent/grandchild, sibling relationships, etc.
+
+============================================================================
+MAIDEN NAME EXTRACTION (CRITICAL)
+============================================================================
+
 **SPECIAL ATTENTION TO MAIDEN NAMES:**
 Look very carefully at the deceased person's name line for maiden name indicators:
 - Parentheses with "Nee", "née", "born", or "formerly"
 - These are CRITICAL for GEDCOM compliance
 - Example: "Smith, Jane (Nee Jones)" → maiden_name fact with value "Jones"
-
-FACT TYPES:
-- person_name: Full name
-- person_nickname: Nickname or alternate name
-- person_death_date: Date of death
-- person_death_age: Age at death
-- person_birth_date: Birth date (rare in obituaries)
-- person_gender: M or F
-- maiden_name: Maiden name (surname before marriage)
-
-**MAIDEN NAME EXTRACTION (CRITICAL):**
 
 Maiden names appear in several patterns - extract from ANY of these:
 1. "(Nee Surname)" or "(née Surname)" → maiden name is "Surname"
@@ -243,6 +461,20 @@ Extract:
 - Only extract for the person whose name contains the notation
 - Case insensitive: "Nee", "NEE", "née" all indicate maiden name
 
+============================================================================
+FACT TYPES REFERENCE
+============================================================================
+
+- person_name: Full name
+- person_nickname: Nickname or alternate name
+- person_death_date: Date of death
+- person_death_age: Age at death
+- person_birth_date: Birth date (rare in obituaries)
+- person_birth_year_approx: Approximate birth year (inferred from age)
+- person_gender: M or F
+- maiden_name: Maiden name (surname before marriage)
+- surname: Last name (can be inferred)
+- deceased: Whether a person is deceased (true/false)
 - relationship: A relationship between two people
 - marriage: Marriage relationship (use for spouses)
 - marriage_duration: Years married
@@ -252,20 +484,32 @@ Extract:
 - survived_by: Listed in "survived by" section
 - preceded_in_death: Listed in "preceded in death by" section
 
-CONFIDENCE SCORING:
+============================================================================
+CONFIDENCE SCORING
+============================================================================
+
 - 1.00: Explicitly stated, unambiguous ("died December 18, 2008")
 - 0.90-0.99: Clearly stated with minor ambiguity
-- 0.75-0.89: Inferred from clear context ("his wife Mary" → Mary is spouse)
+- 0.85-0.89: Inferred from clear context with high confidence
+- 0.75-0.84: Inferred from clear context ("his wife Mary" → Mary is spouse)
 - 0.60-0.74: Inferred with assumptions (child's surname from parent)
 - Below 0.60: Highly uncertain
 
-CRITICAL RULES:
-1. Extract EVERY fact you can identify
-2. For relationships, create facts for BOTH directions when appropriate
-3. Always mark inferred facts as is_inferred: true
-4. Include exact supporting text in extracted_context
-5. Use confidence scores honestly
-6. Return ONLY valid JSON, no markdown
+============================================================================
+CRITICAL RULES - READ CAREFULLY
+============================================================================
+
+1. Extract EVERY fact you can identify - be comprehensive
+2. For relationships, create facts for BOTH directions
+3. Extract marriage facts for ALL couples (not just deceased's spouse)
+4. Infer surnames from family relationships
+5. Extract deceased facts from "the late", "preceded in death by", etc.
+6. Extract grandchild relationships AND approximate birth years from ages
+7. Infer sibling relationships from in-law mentions
+8. Always mark inferred facts as is_inferred: true with inference_basis
+9. Include exact supporting text in extracted_context
+10. Use confidence scores honestly
+11. Return ONLY valid JSON, no markdown
 
 OBITUARY TEXT:
 {obituary_text}
@@ -561,24 +805,65 @@ async def process_obituary_full(
     obituary_text: str
 ) -> Dict:
     """
-    Complete multi-pass extraction pipeline.
+    Hybrid extraction pipeline: Rules engine + LLM fallback.
+
+    Phase 1: Rules engine extracts deterministic patterns (~95% of facts)
+    Phase 2: LLM can be used for ambiguous cases (optional)
 
     Returns summary of extraction.
     """
+    from services.rules_extractor import RulesExtractor
 
-    # Pass 1: Person mentions
-    persons, person_llm_id = await extract_person_mentions(
-        db, obituary_cache_id, obituary_text
-    )
+    # Phase 1: Rules-based extraction (deterministic, fast, free)
+    extractor = RulesExtractor()
+    rules_result = extractor.extract_all(obituary_text)
 
-    # Pass 2: Facts
-    facts = await extract_facts_from_obituary(
-        db, obituary_cache_id, obituary_text, persons
-    )
+    # Convert rules result to ExtractedFact objects and save to DB
+    extracted_facts = []
+    seen_facts = set()  # Deduplication
+
+    for fact_data in rules_result['facts']:
+        # Create deduplication key
+        dedup_key = (
+            fact_data['fact_type'],
+            fact_data['subject_name'],
+            fact_data['fact_value'],
+            fact_data.get('related_name'),
+            fact_data.get('relationship_type')
+        )
+
+        if dedup_key in seen_facts:
+            continue
+        seen_facts.add(dedup_key)
+
+        fact = ExtractedFact(
+            obituary_cache_id=obituary_cache_id,
+            llm_cache_id=None,  # Rules-based, no LLM cache
+            fact_type=fact_data['fact_type'],
+            subject_name=fact_data['subject_name'],
+            subject_role=fact_data.get('subject_role', 'other'),
+            fact_value=fact_data['fact_value'],
+            related_name=fact_data.get('related_name'),
+            relationship_type=fact_data.get('relationship_type'),
+            extracted_context=fact_data.get('extracted_context'),
+            is_inferred=fact_data.get('is_inferred', False),
+            inference_basis=fact_data.get('inference_basis'),
+            confidence_score=fact_data.get('confidence_score', 1.0)
+        )
+        db.add(fact)
+        extracted_facts.append(fact)
+
+    db.commit()
+
+    # Refresh to get IDs
+    for fact in extracted_facts:
+        db.refresh(fact)
+
+    print(f"[Rules] Extracted {len(rules_result['persons'])} persons, {len(extracted_facts)} facts")
 
     return {
-        'persons_extracted': len(persons),
-        'facts_extracted': len(facts),
-        'persons': persons,
-        'facts': [f.to_dict() for f in facts]
+        'persons_extracted': len(rules_result['persons']),
+        'facts_extracted': len(extracted_facts),
+        'persons': rules_result['persons'],
+        'facts': [f.to_dict() for f in extracted_facts]
     }

@@ -19,8 +19,11 @@ class ExtractedFact(Base):
             'person_death_date',
             'person_death_age',
             'person_birth_date',
+            'person_birth_year_approx',
             'person_gender',
             'maiden_name',
+            'surname',
+            'deceased',
             'relationship',
             'marriage',
             'marriage_duration',
@@ -118,7 +121,48 @@ class ExtractedFact(Base):
             'inference_basis': self.inference_basis,
             'confidence_score': float(self.confidence_score) if self.confidence_score else None,
             'resolution_status': self.resolution_status,
+            'description': self._human_readable(),
         }
+
+    def _human_readable(self) -> str:
+        """Generate a human-readable description of the fact."""
+        if self.fact_type == 'relationship':
+            if self.relationship_type:
+                return f"{self.subject_name}'s {self.fact_value} is {self.related_name} ({self.relationship_type})"
+            return f"{self.subject_name}'s {self.fact_value} is {self.related_name}"
+
+        elif self.fact_type == 'marriage':
+            return f"{self.subject_name} married to {self.related_name}"
+
+        elif self.fact_type == 'marriage_duration':
+            return f"{self.subject_name} married to {self.related_name} for {self.fact_value}"
+
+        elif self.fact_type == 'maiden_name':
+            return f"{self.subject_name}'s maiden name is {self.fact_value}"
+
+        elif self.fact_type == 'person_death_date':
+            return f"{self.subject_name} died on {self.fact_value}"
+
+        elif self.fact_type == 'person_death_age':
+            return f"{self.subject_name} died at age {self.fact_value}"
+
+        elif self.fact_type == 'person_nickname':
+            return f"{self.subject_name}'s nickname is \"{self.fact_value}\""
+
+        elif self.fact_type == 'person_birth_year_approx':
+            return f"{self.subject_name} born approximately {self.fact_value}"
+
+        elif self.fact_type == 'deceased':
+            return f"{self.subject_name} is deceased"
+
+        elif self.fact_type == 'preceded_in_death':
+            return f"{self.subject_name} died before the obituary subject"
+
+        elif self.fact_type == 'surname':
+            return f"{self.subject_name}'s surname is {self.fact_value}"
+
+        else:
+            return f"{self.subject_name}: {self.fact_type} = {self.fact_value}"
 
 
 class PersonCluster(Base):
