@@ -1,13 +1,52 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useURLValidation } from '../../hooks/useURLValidation';
 import { processObituary } from '../../api/client';
+
+const PROCESSING_STEPS = [
+  { id: 'validate', label: 'Validating URL' },
+  { id: 'cache', label: 'Checking cache' },
+  { id: 'fetch', label: 'Fetching obituary' },
+  { id: 'extract', label: 'Extracting facts' },
+  { id: 'store', label: 'Storing results' },
+];
 
 export function URLForm({ onSuccess, onError }) {
   const [url, setUrl] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(null);
+  const [currentStep, setCurrentStep] = useState(0);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   const { isValid, error: validationError, warning } = useURLValidation(url);
+
+  // Animate through steps while submitting
+  useEffect(() => {
+    if (!isSubmitting) {
+      setCurrentStep(0);
+      setElapsedSeconds(0);
+      return;
+    }
+
+    // Progress through steps
+    const stepInterval = setInterval(() => {
+      setCurrentStep(prev => {
+        // Cycle through steps 2-4 (fetch, extract, store) while waiting
+        if (prev < 2) return prev + 1;
+        if (prev >= PROCESSING_STEPS.length - 1) return 2;
+        return prev + 1;
+      });
+    }, 1500);
+
+    // Update elapsed time
+    const timeInterval = setInterval(() => {
+      setElapsedSeconds(prev => prev + 1);
+    }, 1000);
+
+    return () => {
+      clearInterval(stepInterval);
+      clearInterval(timeInterval);
+    };
+  }, [isSubmitting]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -18,12 +57,20 @@ export function URLForm({ onSuccess, onError }) {
     setIsSubmitting(true);
     setSubmitError(null);
 
+    const startTime = Date.now();
+
     try {
       const result = await processObituary(url);
 
-      // Call success callback with full result
+      // Add processing time to result
+      const processingTimeMs = Date.now() - startTime;
+
+      // Call success callback with full result including processing time
       if (onSuccess) {
-        onSuccess(result);
+        onSuccess({
+          ...result,
+          processing_time_ms: processingTimeMs,
+        });
       }
     } catch (err) {
       const errorMessage = err.message || 'Failed to process obituary';
@@ -153,6 +200,50 @@ export function URLForm({ onSuccess, onError }) {
               'Process Obituary'
             )}
           </button>
+
+          {/* Processing Progress */}
+          {isSubmitting && (
+            <div className="mt-6 pt-6 border-t border-gray-200">
+              <div className="space-y-3">
+                {PROCESSING_STEPS.map((step, index) => {
+                  const isComplete = index < currentStep;
+                  const isActive = index === currentStep;
+                  const isPending = index > currentStep;
+
+                  return (
+                    <div key={step.id} className="flex items-center">
+                      {isComplete && (
+                        <svg className="w-5 h-5 text-green-500 mr-3" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                        </svg>
+                      )}
+                      {isActive && (
+                        <svg className="animate-spin w-5 h-5 text-blue-600 mr-3" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+                        </svg>
+                      )}
+                      {isPending && (
+                        <svg className="w-5 h-5 text-gray-300 mr-3" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm0-2a6 6 0 100-12 6 6 0 000 12z" clipRule="evenodd" />
+                        </svg>
+                      )}
+                      <span className={`text-sm ${
+                        isComplete ? 'text-gray-900' :
+                        isActive ? 'text-blue-600 font-medium' :
+                        'text-gray-400'
+                      }`}>
+                        {step.label}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="mt-4 text-sm text-gray-500">
+                Elapsed: {elapsedSeconds} second{elapsedSeconds !== 1 ? 's' : ''}
+              </div>
+            </div>
+          )}
         </form>
       </div>
     </div>

@@ -390,6 +390,66 @@ async def delete_obituary(
     return {"status": "success", "message": "Obituary deleted"}
 
 
+@app.post("/api/obituaries/{obituary_id}/reprocess")
+async def reprocess_obituary(
+    obituary_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Reprocess an obituary using its stored extracted text.
+    Deletes existing facts and re-runs the rules engine extraction.
+    """
+    # Get obituary
+    obituary = db.query(ObituaryCache).filter(
+        ObituaryCache.id == obituary_id
+    ).first()
+
+    if not obituary:
+        raise HTTPException(status_code=404, detail=f"Obituary {obituary_id} not found")
+
+    if not obituary.extracted_text:
+        raise HTTPException(status_code=400, detail="No extracted text available for reprocessing")
+
+    try:
+        # Delete existing facts
+        db.query(ExtractedFact).filter(
+            ExtractedFact.obituary_cache_id == obituary_id
+        ).delete()
+        db.commit()
+
+        # Set status to processing
+        obituary.processing_status = 'processing'
+        db.commit()
+
+        # Re-run fact extraction
+        result = await process_obituary_full(
+            db,
+            obituary_id,
+            obituary.extracted_text
+        )
+
+        # Update status to completed
+        obituary.processing_status = 'completed'
+        db.commit()
+
+        return {
+            'status': 'success',
+            'obituary_id': obituary_id,
+            'processing_status': 'completed',
+            'persons_extracted': result.get('persons_extracted', 0),
+            'facts_extracted': result.get('facts_extracted', 0),
+            'message': 'Obituary reprocessed successfully'
+        }
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        obituary.processing_status = 'failed'
+        obituary.fetch_error = str(e)
+        db.commit()
+        raise HTTPException(status_code=500, detail=f"Reprocessing failed: {str(e)}")
+
+
 @app.get("/api/obituaries/{obituary_id}/facts", response_model=ObituaryFactsResponse)
 async def get_obituary_facts(
     obituary_id: int,

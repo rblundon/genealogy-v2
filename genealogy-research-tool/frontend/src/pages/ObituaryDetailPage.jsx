@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { getObituaryStatus, getObituaryFacts, deleteObituary } from '../api/client';
+import { getObituaryStatus, getObituaryFacts, deleteObituary, reprocessObituary } from '../api/client';
 import { StatusBadge } from '../components/shared/StatusBadge';
 import { ConfirmDialog } from '../components/shared/ConfirmDialog';
 import { ExpandableSection } from '../components/shared/ExpandableSection';
@@ -16,6 +16,7 @@ export function ObituaryDetailPage() {
   const [error, setError] = useState(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isReprocessing, setIsReprocessing] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -50,6 +51,19 @@ export function ObituaryDetailPage() {
       alert(`Failed to delete: ${err.message}`);
       setIsDeleting(false);
       setShowDeleteDialog(false);
+    }
+  };
+
+  const handleReprocess = async () => {
+    setIsReprocessing(true);
+
+    try {
+      await reprocessObituary(id);
+      await loadData();
+    } catch (err) {
+      alert(`Failed to reprocess: ${err.message}`);
+    } finally {
+      setIsReprocessing(false);
     }
   };
 
@@ -253,16 +267,28 @@ export function ObituaryDetailPage() {
       {/* Actions */}
       <div className="bg-white shadow-sm rounded-lg p-6">
         <h3 className="text-lg font-medium text-gray-900 mb-4">Actions</h3>
-        <button
-          onClick={() => setShowDeleteDialog(true)}
-          disabled={isDeleting}
-          className="inline-flex items-center px-4 py-2 border border-red-300 rounded-md text-sm font-medium text-red-700 bg-white hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50"
-        >
-          <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-          </svg>
-          {isDeleting ? 'Deleting...' : 'Delete Obituary'}
-        </button>
+        <div className="flex gap-3">
+          <button
+            onClick={handleReprocess}
+            disabled={isReprocessing}
+            className="inline-flex items-center px-4 py-2 border border-blue-300 rounded-md text-sm font-medium text-blue-700 bg-white hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
+          >
+            <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            {isReprocessing ? 'Reprocessing...' : 'Reprocess Obituary'}
+          </button>
+          <button
+            onClick={() => setShowDeleteDialog(true)}
+            disabled={isDeleting}
+            className="inline-flex items-center px-4 py-2 border border-red-300 rounded-md text-sm font-medium text-red-700 bg-white hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50"
+          >
+            <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+            {isDeleting ? 'Deleting...' : 'Delete Obituary'}
+          </button>
+        </div>
       </div>
 
       {/* Delete Confirmation Dialog */}

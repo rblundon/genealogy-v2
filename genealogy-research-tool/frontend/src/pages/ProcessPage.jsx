@@ -1,8 +1,10 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { URLForm } from '../components/obituary/URLForm';
 import { ProgressTracker } from '../components/obituary/ProgressTracker';
 
 export function ProcessPage() {
+  const navigate = useNavigate();
   const [currentObituaryId, setCurrentObituaryId] = useState(null);
   const [initialResult, setInitialResult] = useState(null);
   const [showResults, setShowResults] = useState(false);
@@ -56,10 +58,16 @@ export function ProcessPage() {
           />
 
           {showResults && (
-            <div className="mt-6 text-center">
+            <div className="mt-6 flex justify-center gap-4">
+              <button
+                onClick={() => navigate(`/obituaries/${currentObituaryId}`)}
+                className="px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+              >
+                View Results
+              </button>
               <button
                 onClick={handleProcessAnother}
-                className="px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+                className="px-6 py-3 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 transition-colors"
               >
                 Process Another Obituary
               </button>

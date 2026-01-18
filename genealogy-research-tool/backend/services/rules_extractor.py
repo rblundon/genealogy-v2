@@ -76,6 +76,9 @@ class Fact:
         elif self.fact_type == 'marriage_duration':
             return f"{self.subject_name} married to {self.related_name} for {self.fact_value}"
 
+        elif self.fact_type == 'marriage_date':
+            return f"{self.subject_name} married {self.related_name} on {self.fact_value}"
+
         elif self.fact_type == 'maiden_name':
             return f"{self.subject_name}'s maiden name is {self.fact_value}"
 
@@ -158,14 +161,16 @@ class RulesExtractor:
         re.compile(r'(?:^|,\s+)(\w+day),?\s+(\w+\s+\d{1,2},\s+\d{4})', re.IGNORECASE),
         # "on May 24, 2018"
         re.compile(r'on\s+(\w+\s+\d{1,2},\s+\d{4})', re.IGNORECASE),
+        # "Passed away Friday November 2, 2018" - day of week then date
+        re.compile(r'(?:Passed\s+away|Died)\s+\w+day\s+(\w+\s+\d{1,2},\s+\d{4})', re.IGNORECASE),
         # "December 18, 2008" standalone date
         re.compile(r'(?:^|\s)(\w+\s+\d{1,2},\s+\d{4})', re.IGNORECASE),
     ]
 
     # Death age patterns
     DEATH_AGE_PATTERNS = [
-        re.compile(r'at\s+the\s+age\s+of\s+(\d+)\s+years?', re.IGNORECASE),
-        re.compile(r'age\s+(\d+)\s+years?', re.IGNORECASE),
+        re.compile(r'at\s+the\s+age\s+of\s+(\d+)(?:\s+years?)?', re.IGNORECASE),
+        re.compile(r'age\s+(\d+)(?:\s+years?)?', re.IGNORECASE),
         re.compile(r',\s+age\s+(\d+)', re.IGNORECASE),
     ]
 
@@ -180,7 +185,7 @@ class RulesExtractor:
             re.IGNORECASE
         ),
         'parent': re.compile(
-            r'(?:Loving\s+|Cherished\s+)?(?:mother|father|parent)\s+of\s+(.+?)(?=\.|Sister|Brother|Also|Visitation|$)',
+            r'(?:Loving\s+|Cherished\s+|Dearest\s+|Devoted\s+|Proud\s+)?(?:mother|father|mom|dad|parent)\s+of\s+(.+?)(?=\.|Sister|Brother|Loving|Also|Visitation|Fond|Uncle|$)',
             re.IGNORECASE
         ),
         'child': re.compile(
@@ -188,11 +193,11 @@ class RulesExtractor:
             re.IGNORECASE
         ),
         'grandparent': re.compile(
-            r'(?:Proud\s+(?:and\s+loving\s+)?)?(?:grandma|grandpa|grandmother|grandfather|gramps)\s+of\s+(.+?)(?=\.|Dearest|Sister|Brother|Also|Visitation|$)',
+            r'(?:Proud\s+(?:and\s+loving\s+)?|Loving\s+)?(?:grandma|grandpa|grandmother|grandfather|gramps|grandparent)\s+of\s+(.+?)(?=\.|Dearest|Sister|Brother|Fond|Also|Visitation|Uncle|$)',
             re.IGNORECASE
         ),
         'grandchild': re.compile(
-            r'(?:Cherished\s+)?(?:grandchildren?|grandson|granddaughter)\s+(.+?)(?=;|great-grand|Also|$)',
+            r'(?:Cherished\s+|Loving\s+)?(?:grandchildren?|grandson|granddaughter)\s+(?:of\s+)?(.+?)(?=;|\.|great-grand|Fond|Uncle|Also|$)',
             re.IGNORECASE
         ),
         'great_grandchild': re.compile(
@@ -200,7 +205,7 @@ class RulesExtractor:
             re.IGNORECASE
         ),
         'sibling': re.compile(
-            r'(?:and\s+)?(?:brothers?|sisters?|siblings?)\s+([A-Z][a-zA-Z.\'\s\(\)-]+?)(?=\.|Also|$)',
+            r'(?:Fond\s+|Dear\s+|Loving\s+)?(?:and\s+)?(?:brothers?|sisters?|siblings?)\s+(?:of\s+)?(.+?)(?=\.|Uncle|Aunt|Also|Further|$)',
             re.IGNORECASE
         ),
         'in_law': re.compile(
@@ -211,19 +216,34 @@ class RulesExtractor:
             r'(?:faithful\s+)?son-in-law\s+([A-Z][a-zA-Z.\'\s-]+?)(?=;|,|$)',
             re.IGNORECASE
         ),
+        'uncle': re.compile(
+            r'(?:Loving\s+|Dear\s+)?[Uu]ncle\s+of\s+(.+?)(?=\.|Great|Also|Further|$)',
+            re.IGNORECASE
+        ),
+        'great_uncle': re.compile(
+            r'[Gg]reat\s+[Uu]ncle\s+of\s+(.+?)(?=\.|Also|Further|$)',
+            re.IGNORECASE
+        ),
     }
 
     # Pattern for name with parenthetical (spouse or age)
     # Note: spouse name can be multi-word like "Rose Mary"
+    # Also handles "the late X" prefix in parenthetical
     NAME_WITH_PAREN = re.compile(
-        r'([A-Z][a-zA-Z.\'-]+)\s+\(([A-Za-z][a-zA-Z.\'\s-]*|[0-9]+)\)(?:\s+([A-Z][a-zA-Z.\'-]+))?'
+        r'(?:the\s+late\s+)?([A-Z][a-zA-Z.\'-]+)\s+\((?:the\s+late\s+)?([A-Za-z][a-zA-Z.\'\s-]*|[0-9]+)\)(?:\s+([A-Z][a-zA-Z.\'-]+))?'
     )
 
-    # Pattern for simple name (just given name)
-    SIMPLE_NAME = re.compile(r'([A-Z][a-zA-Z\.\'-]+)')
+    # Pattern for simple name (just given name), optionally with "the late" prefix
+    SIMPLE_NAME = re.compile(r'(?:the\s+late\s+)?([A-Z][a-zA-Z\.\'-]+)')
 
     # Pattern for "the late X"
-    THE_LATE = re.compile(r'the\s+late\s+([A-Z][a-zA-Z.\'\s\(\)-]+?)(?=\.|,|;|$)', re.IGNORECASE)
+    THE_LATE = re.compile(r'the\s+late\s+([A-Z][a-zA-Z.\'\s\(\)-]+?)(?=\.|,|;|and\s|$)', re.IGNORECASE)
+
+    # Pattern for marriage date "Married November 5, 1955"
+    MARRIAGE_DATE = re.compile(
+        r'[Mm]arried\s+(\w+\s+\d{1,2},\s+\d{4})(?:\s+(?:just\s+shy\s+of\s+)?(\d+)\s+years?)?',
+        re.IGNORECASE
+    )
 
     # Pattern for "Reunited with X"
     REUNITED_WITH = re.compile(
@@ -287,6 +307,15 @@ class RulesExtractor:
         # Step 8: Extract in-law relationships
         self._extract_in_laws(obituary_text)
 
+        # Step 8b: Extract uncle/aunt relationships
+        self._extract_uncles(obituary_text)
+
+        # Step 8c: Extract great uncle/aunt relationships
+        self._extract_great_uncles(obituary_text)
+
+        # Step 8d: Extract marriage date
+        self._extract_marriage_date(obituary_text)
+
         # Step 9: Extract deceased markers ("the late", "Reunited with")
         self._extract_deceased_markers(obituary_text)
 
@@ -296,7 +325,10 @@ class RulesExtractor:
         # Step 11: Apply sibling inference from in-laws
         self._apply_sibling_inference()
 
-        # Step 12: Generate all facts
+        # Step 12: Apply family structure inference (son-in-law + daughter = marriage, grandchildren parentage)
+        self._apply_family_structure_inference()
+
+        # Step 13: Generate all facts
         self._generate_facts()
 
         return {
@@ -311,6 +343,18 @@ class RulesExtractor:
         nickname = None
         maiden_name = None
         rest_of_text = None
+
+        # Find where the actual header starts (Surname, Given...)
+        # Handle preambles like "Milwaukee, Wisconsin Reginald Paradowski Obituary"
+        # Look for "Surname, Given Names" pattern followed by keywords like "Passed", "Beloved", etc.
+        header_start_match = re.search(
+            r'([A-Z][a-z\'-]+),\s+([A-Z][a-zA-Z.\s]+?)\s+'
+            r'(?:Passed|Beloved|Loving|Devoted|Peacefully|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|Reunited|Taken|On\s+\w+day)',
+            text,
+            re.IGNORECASE
+        )
+        if header_start_match:
+            text = text[header_start_match.start():]
 
         # Try patterns in order of specificity
         match = self.HEADER_FULL.match(text)
@@ -595,6 +639,72 @@ class RulesExtractor:
                     confidence_score=1.0
                 ))
 
+    def _extract_uncles(self, text: str) -> None:
+        """Extract uncle/aunt relationships (nieces/nephews of deceased)."""
+        match = self.RELATIONSHIP_PATTERNS['uncle'].search(text)
+        if not match:
+            return
+
+        nieces_nephews_text = match.group(1)
+        self._parse_name_list(nieces_nephews_text, "niece_nephew", self.deceased_person)
+
+    def _extract_great_uncles(self, text: str) -> None:
+        """Extract great uncle/aunt relationships (grand-nieces/nephews of deceased)."""
+        match = self.RELATIONSHIP_PATTERNS['great_uncle'].search(text)
+        if not match:
+            return
+
+        grand_nieces_nephews_text = match.group(1)
+        self._parse_name_list(grand_nieces_nephews_text, "grand_niece_nephew", self.deceased_person)
+
+    def _extract_marriage_date(self, text: str) -> None:
+        """Extract marriage date and duration."""
+        match = self.MARRIAGE_DATE.search(text)
+        if not match:
+            return
+
+        marriage_date = match.group(1)
+        duration = match.group(2) if match.lastindex >= 2 else None
+
+        # Add marriage date fact if we have a spouse
+        if self.deceased_person and self.deceased_spouse_name:
+            spouse_full = None
+            for name, person in self.persons.items():
+                if person.given_names == self.deceased_spouse_name and person.role == "spouse":
+                    spouse_full = name
+                    break
+
+            if spouse_full:
+                # Store marriage date as a marriage fact with date in extracted_context
+                # (marriage_date is not a valid fact_type in schema)
+                self.facts.append(Fact(
+                    fact_type="marriage",
+                    subject_name=self.deceased_person.full_name,
+                    subject_role="deceased_primary",
+                    fact_value="spouse",
+                    related_name=spouse_full,
+                    extracted_context=f"Married {marriage_date}",
+                    confidence_score=1.0
+                ))
+
+                if duration:
+                    # Update or add marriage duration fact
+                    existing_duration = next(
+                        (f for f in self.facts if f.fact_type == "marriage_duration"
+                         and f.subject_name == self.deceased_person.full_name),
+                        None
+                    )
+                    if not existing_duration:
+                        self.facts.append(Fact(
+                            fact_type="marriage_duration",
+                            subject_name=self.deceased_person.full_name,
+                            subject_role="deceased_primary",
+                            fact_value=f"{duration} years",
+                            related_name=spouse_full,
+                            extracted_context=match.group(0),
+                            confidence_score=1.0
+                        ))
+
     def _extract_deceased_markers(self, text: str) -> None:
         """Extract markers indicating someone is deceased."""
         # "the late X" - indicates person died before the obituary subject
@@ -680,8 +790,8 @@ class RulesExtractor:
                                 # Spouse shares surname with deceased
                                 inferred_surname = self.deceased_person.surname
                             elif role_type in ["daughter", "son"]:
-                                # Child might have different surname if married, but if no other info assume deceased's maiden/surname
-                                inferred_surname = self.deceased_person.maiden_name or self.deceased_person.surname
+                                # Child has deceased's surname (married name, not maiden name)
+                                inferred_surname = self.deceased_person.surname
 
                         person = Person(
                             given_names=given_name,
@@ -691,6 +801,7 @@ class RulesExtractor:
                             is_deceased=True
                         )
                         self.persons[person.full_name] = person
+
                         # Add preceded_in_death fact
                         self.facts.append(Fact(
                             fact_type="preceded_in_death",
@@ -702,6 +813,52 @@ class RulesExtractor:
                             inference_basis="'Reunited with' indicates person died before obituary subject",
                             confidence_score=0.95
                         ))
+
+                        # Add marriage fact for husband/wife
+                        if role_type in ["husband", "wife"] and self.deceased_person:
+                            self.facts.append(Fact(
+                                fact_type="marriage",
+                                subject_name=self.deceased_person.full_name,
+                                subject_role="deceased_primary",
+                                fact_value="spouse",
+                                related_name=person.full_name,
+                                relationship_type=role_type,
+                                extracted_context=reunited_match.group(0),
+                                confidence_score=1.0
+                            ))
+                            self.facts.append(Fact(
+                                fact_type="marriage",
+                                subject_name=person.full_name,
+                                subject_role="spouse",
+                                fact_value="spouse",
+                                related_name=self.deceased_person.full_name,
+                                relationship_type="wife" if role_type == "husband" else "husband",
+                                extracted_context=reunited_match.group(0),
+                                confidence_score=1.0
+                            ))
+
+                        # Add child relationship for daughter/son
+                        if role_type in ["daughter", "son"] and self.deceased_person:
+                            self.facts.append(Fact(
+                                fact_type="relationship",
+                                subject_name=self.deceased_person.full_name,
+                                subject_role="deceased_primary",
+                                fact_value="child",
+                                related_name=person.full_name,
+                                relationship_type=role_type,
+                                extracted_context=reunited_match.group(0),
+                                confidence_score=1.0
+                            ))
+                            self.facts.append(Fact(
+                                fact_type="relationship",
+                                subject_name=person.full_name,
+                                subject_role="child",
+                                fact_value="parent",
+                                related_name=self.deceased_person.full_name,
+                                relationship_type="mother" if self.deceased_person.maiden_name else "parent",
+                                extracted_context=reunited_match.group(0),
+                                confidence_score=1.0
+                            ))
 
     def _parse_name_list(self, text: str, role: str, parent_person: Optional[Person], in_law_type: str = None) -> None:
         """
@@ -717,12 +874,18 @@ class RulesExtractor:
             if not entry:
                 continue
 
+            # Check for "the late" prefix indicating deceased
+            is_late = 'the late' in entry.lower()
+
             # Try to match "Name (Spouse) Surname" or "Name (Spouse)"
             match = self.NAME_WITH_PAREN.search(entry)
             if match:
                 given = match.group(1)
                 paren_content = match.group(2)
                 surname = match.group(3) if match.lastindex >= 3 else None
+
+                # Check if spouse is also deceased ("the late X" in parentheses)
+                spouse_is_late = 'the late' in entry.lower() and paren_content.lower() not in entry.lower().split('the late')[0]
 
                 # Check if paren_content is age (digits) or name
                 if paren_content.isdigit():
@@ -731,7 +894,8 @@ class RulesExtractor:
                         given_names=given,
                         surname=surname,
                         role=role,
-                        birth_year_approx=self.death_year - int(paren_content) if self.death_year else None
+                        birth_year_approx=self.death_year - int(paren_content) if self.death_year else None,
+                        is_deceased=is_late
                     )
                     self.persons[person.full_name] = person
                 else:
@@ -741,16 +905,19 @@ class RulesExtractor:
                         given_names=given,
                         surname=surname,
                         role=role,
-                        spouse_name=paren_content
+                        spouse_name=paren_content,
+                        is_deceased=is_late
                     )
                     self.persons[person.full_name] = person
 
-                    # Spouse
+                    # Spouse - check if "the late" appears before paren content
+                    spouse_deceased = 'the late ' + paren_content.lower() in entry.lower() or '(the late' in entry.lower()
                     spouse = Person(
                         given_names=paren_content,
                         surname=surname,  # Spouse shares surname if present
                         role="in_law" if role in ["child", "sibling"] else role,
-                        spouse_name=given
+                        spouse_name=given,
+                        is_deceased=spouse_deceased
                     )
                     self.persons[spouse.full_name] = spouse
 
@@ -806,6 +973,75 @@ class RulesExtractor:
                             fact_value="in_law",
                             related_name=person.full_name,
                             relationship_type=f"{in_law_type}-in-law",
+                            extracted_context=entry,
+                            confidence_score=1.0
+                        ))
+                    elif role == "sibling":
+                        # Sibling relationship (deceased's brothers/sisters)
+                        self.facts.append(Fact(
+                            fact_type="relationship",
+                            subject_name=parent_person.full_name,
+                            subject_role="deceased_primary",
+                            fact_value="sibling",
+                            related_name=person.full_name,
+                            relationship_type="brother" if not self._is_female_name(given) else "sister",
+                            extracted_context=entry,
+                            confidence_score=1.0
+                        ))
+                        # Bidirectional
+                        self.facts.append(Fact(
+                            fact_type="relationship",
+                            subject_name=person.full_name,
+                            subject_role="sibling",
+                            fact_value="sibling",
+                            related_name=parent_person.full_name,
+                            relationship_type="sister" if parent_person.maiden_name else "sibling",
+                            extracted_context=entry,
+                            confidence_score=1.0
+                        ))
+                    elif role == "niece_nephew":
+                        # Uncle/aunt -> niece/nephew relationship
+                        self.facts.append(Fact(
+                            fact_type="relationship",
+                            subject_name=parent_person.full_name,
+                            subject_role="deceased_primary",
+                            fact_value="niece_nephew",
+                            related_name=person.full_name,
+                            relationship_type="nephew" if not self._is_female_name(given) else "niece",
+                            extracted_context=entry,
+                            confidence_score=1.0
+                        ))
+                        # Bidirectional
+                        self.facts.append(Fact(
+                            fact_type="relationship",
+                            subject_name=person.full_name,
+                            subject_role="niece_nephew",
+                            fact_value="uncle_aunt",
+                            related_name=parent_person.full_name,
+                            relationship_type="uncle",
+                            extracted_context=entry,
+                            confidence_score=1.0
+                        ))
+                    elif role == "grand_niece_nephew":
+                        # Great uncle/aunt -> grand niece/nephew relationship
+                        self.facts.append(Fact(
+                            fact_type="relationship",
+                            subject_name=parent_person.full_name,
+                            subject_role="deceased_primary",
+                            fact_value="grand_niece_nephew",
+                            related_name=person.full_name,
+                            relationship_type="grand nephew" if not self._is_female_name(given) else "grand niece",
+                            extracted_context=entry,
+                            confidence_score=1.0
+                        ))
+                        # Bidirectional
+                        self.facts.append(Fact(
+                            fact_type="relationship",
+                            subject_name=person.full_name,
+                            subject_role="grand_niece_nephew",
+                            fact_value="great_uncle_aunt",
+                            related_name=parent_person.full_name,
+                            relationship_type="great uncle",
                             extracted_context=entry,
                             confidence_score=1.0
                         ))
@@ -1136,6 +1372,257 @@ class RulesExtractor:
                         confidence_score=0.85
                     ))
 
+    def _apply_family_structure_inference(self) -> None:
+        """
+        Infer family relationships from structure:
+        1. If son-in-law exists and only one daughter, they are married
+        2. If grandchildren exist and only one child couple, grandchildren are their children
+        3. Infer maiden names for daughters based on parent's surname
+        """
+        if not self.deceased_person:
+            return
+
+        # Find all children (daughters and sons)
+        children = []
+        for name, person in self.persons.items():
+            if person.role == "child":
+                children.append((name, person))
+
+        # Find son-in-law / daughter-in-law
+        in_laws_by_type = {'son-in-law': [], 'daughter-in-law': []}
+        for fact in self.facts:
+            if fact.fact_type == "relationship" and fact.fact_value == "in_law":
+                if fact.relationship_type == "son-in-law":
+                    in_laws_by_type['son-in-law'].append(fact.related_name)
+                elif fact.relationship_type == "daughter-in-law":
+                    in_laws_by_type['daughter-in-law'].append(fact.related_name)
+
+        # Inference 1: Son-in-law + single daughter = marriage
+        daughters = [(n, p) for n, p in children if self._is_female_name(p.given_names)]
+        sons = [(n, p) for n, p in children if not self._is_female_name(p.given_names)]
+
+        if len(daughters) == 1 and len(in_laws_by_type['son-in-law']) == 1:
+            daughter_name, daughter = daughters[0]
+            son_in_law_name = in_laws_by_type['son-in-law'][0]
+
+            # Check if marriage doesn't already exist
+            marriage_exists = any(
+                f.fact_type == "marriage" and
+                ((f.subject_name == daughter_name and f.related_name == son_in_law_name) or
+                 (f.subject_name == son_in_law_name and f.related_name == daughter_name))
+                for f in self.facts
+            )
+
+            if not marriage_exists:
+                self.facts.append(Fact(
+                    fact_type="marriage",
+                    subject_name=daughter_name,
+                    subject_role="child",
+                    fact_value="spouse",
+                    related_name=son_in_law_name,
+                    relationship_type="husband",
+                    is_inferred=True,
+                    inference_basis=f"Son-in-law {son_in_law_name} married to only daughter {daughter_name}",
+                    confidence_score=0.90
+                ))
+                self.facts.append(Fact(
+                    fact_type="marriage",
+                    subject_name=son_in_law_name,
+                    subject_role="in_law",
+                    fact_value="spouse",
+                    related_name=daughter_name,
+                    relationship_type="wife",
+                    is_inferred=True,
+                    inference_basis=f"Son-in-law {son_in_law_name} married to only daughter {daughter_name}",
+                    confidence_score=0.90
+                ))
+
+        # Similarly for daughter-in-law + single son
+        if len(sons) == 1 and len(in_laws_by_type['daughter-in-law']) == 1:
+            son_name, son = sons[0]
+            daughter_in_law_name = in_laws_by_type['daughter-in-law'][0]
+
+            marriage_exists = any(
+                f.fact_type == "marriage" and
+                ((f.subject_name == son_name and f.related_name == daughter_in_law_name) or
+                 (f.subject_name == daughter_in_law_name and f.related_name == son_name))
+                for f in self.facts
+            )
+
+            if not marriage_exists:
+                self.facts.append(Fact(
+                    fact_type="marriage",
+                    subject_name=son_name,
+                    subject_role="child",
+                    fact_value="spouse",
+                    related_name=daughter_in_law_name,
+                    relationship_type="wife",
+                    is_inferred=True,
+                    inference_basis=f"Daughter-in-law {daughter_in_law_name} married to only son {son_name}",
+                    confidence_score=0.90
+                ))
+                self.facts.append(Fact(
+                    fact_type="marriage",
+                    subject_name=daughter_in_law_name,
+                    subject_role="in_law",
+                    fact_value="spouse",
+                    related_name=son_name,
+                    relationship_type="husband",
+                    is_inferred=True,
+                    inference_basis=f"Daughter-in-law {daughter_in_law_name} married to only son {son_name}",
+                    confidence_score=0.90
+                ))
+
+        # Inference 2: Grandchildren parentage
+        # If only one child (or child couple), grandchildren are their children
+        grandchildren = [(n, p) for n, p in self.persons.items() if p.role == "grandchild"]
+
+        if grandchildren and len(children) == 1:
+            child_name, child = children[0]
+
+            # Find child's spouse if any
+            child_spouse_name = None
+            for fact in self.facts:
+                if fact.fact_type == "marriage":
+                    if fact.subject_name == child_name:
+                        child_spouse_name = fact.related_name
+                        break
+                    elif fact.related_name == child_name:
+                        child_spouse_name = fact.subject_name
+                        break
+
+            for gc_name, gc in grandchildren:
+                # Check if relationship doesn't already exist
+                relationship_exists = any(
+                    f.fact_type == "relationship" and
+                    f.subject_name == gc_name and f.related_name == child_name
+                    for f in self.facts
+                )
+
+                if not relationship_exists:
+                    # Grandchild is child of the deceased's child
+                    self.facts.append(Fact(
+                        fact_type="relationship",
+                        subject_name=gc_name,
+                        subject_role="grandchild",
+                        fact_value="parent",
+                        related_name=child_name,
+                        relationship_type="mother" if self._is_female_name(child.given_names) else "father",
+                        is_inferred=True,
+                        inference_basis=f"Grandchild of {self.deceased_person.full_name}, only child is {child_name}",
+                        confidence_score=0.75
+                    ))
+                    self.facts.append(Fact(
+                        fact_type="relationship",
+                        subject_name=child_name,
+                        subject_role="child",
+                        fact_value="child",
+                        related_name=gc_name,
+                        relationship_type="son" if not self._is_female_name(gc.given_names) else "daughter",
+                        is_inferred=True,
+                        inference_basis=f"Parent of grandchild {gc_name}",
+                        confidence_score=0.75
+                    ))
+
+                    # If child has spouse, add that relationship too
+                    if child_spouse_name:
+                        spouse_relationship_exists = any(
+                            f.fact_type == "relationship" and
+                            f.subject_name == gc_name and f.related_name == child_spouse_name
+                            for f in self.facts
+                        )
+                        if not spouse_relationship_exists:
+                            child_spouse = self.persons.get(child_spouse_name)
+                            self.facts.append(Fact(
+                                fact_type="relationship",
+                                subject_name=gc_name,
+                                subject_role="grandchild",
+                                fact_value="parent",
+                                related_name=child_spouse_name,
+                                relationship_type="father" if child_spouse and not self._is_female_name(child_spouse.given_names) else "mother",
+                                is_inferred=True,
+                                inference_basis=f"Grandchild of {self.deceased_person.full_name}, parent's spouse is {child_spouse_name}",
+                                confidence_score=0.75
+                            ))
+                            self.facts.append(Fact(
+                                fact_type="relationship",
+                                subject_name=child_spouse_name,
+                                subject_role="in_law",
+                                fact_value="child",
+                                related_name=gc_name,
+                                relationship_type="son" if not self._is_female_name(gc.given_names) else "daughter",
+                                is_inferred=True,
+                                inference_basis=f"Parent of grandchild {gc_name}",
+                                confidence_score=0.75
+                            ))
+
+        # Inference 3: Maiden names for married daughters
+        # If a daughter is married (has different surname), her maiden name is parent's surname
+        if self.deceased_person.surname:
+            for child_name, child in children:
+                if self._is_female_name(child.given_names) and child.surname:
+                    # Check if she has a spouse (married)
+                    is_married = any(
+                        f.fact_type == "marriage" and
+                        (f.subject_name == child_name or f.related_name == child_name)
+                        for f in self.facts
+                    )
+                    if is_married and child.surname != self.deceased_person.surname:
+                        # She's married with a different surname - maiden name is parent's surname
+                        maiden_name_exists = any(
+                            f.fact_type == "maiden_name" and f.subject_name == child_name
+                            for f in self.facts
+                        )
+                        if not maiden_name_exists:
+                            self.facts.append(Fact(
+                                fact_type="maiden_name",
+                                subject_name=child_name,
+                                subject_role="child",
+                                fact_value=self.deceased_person.surname,
+                                is_inferred=True,
+                                inference_basis=f"Married daughter of {self.deceased_person.full_name}",
+                                confidence_score=0.80
+                            ))
+
+        # Inference 4: Maiden names for married granddaughters
+        # If a granddaughter is married and we know her father, her maiden name is father's surname
+        for gc_name, gc in grandchildren:
+            if self._is_female_name(gc.given_names) and gc.surname:
+                # Check if she's married
+                is_married = any(
+                    f.fact_type == "marriage" and
+                    (f.subject_name == gc_name or f.related_name == gc_name)
+                    for f in self.facts
+                )
+                if is_married:
+                    # Find her father (male parent)
+                    father_name = None
+                    for fact in self.facts:
+                        if (fact.fact_type == "relationship" and
+                            fact.subject_name == gc_name and
+                            fact.fact_value == "parent" and
+                            fact.relationship_type == "father"):
+                            father_name = fact.related_name
+                            break
+
+                    if father_name:
+                        father = self.persons.get(father_name)
+                        if father and father.surname and father.surname != gc.surname:
+                            maiden_name_exists = any(
+                                f.fact_type == "maiden_name" and f.subject_name == gc_name
+                                for f in self.facts
+                            )
+                            if not maiden_name_exists:
+                                self.facts.append(Fact(
+                                    fact_type="maiden_name",
+                                    subject_name=gc_name,
+                                    subject_role="grandchild",
+                                    fact_value=father.surname,
+                                    is_inferred=True,
+                                    inference_basis=f"Married daughter of {father_name}",
+                                    confidence_score=0.75
+                                ))
+
     def _generate_facts(self) -> None:
         """Generate facts for all extracted data."""
         if not self.deceased_person:
@@ -1197,13 +1684,28 @@ class RulesExtractor:
 
     def _is_female_name(self, name: str) -> bool:
         """Simple heuristic for female names."""
+        # Common male names that might otherwise be misidentified
+        male_names = [
+            'reggie', 'reginald', 'terry', 'terrence', 'steve', 'steven', 'mike', 'michael',
+            'joe', 'joseph', 'brian', 'ryan', 'ross', 'marty', 'finley', 'joey', 'tommy',
+            'jimmy', 'bobby', 'billy', 'johnny', 'ronny', 'danny', 'teddy', 'eddie', 'charlie'
+        ]
+        female_names = [
+            'megan', 'amy', 'patricia', 'maxine', 'katie', 'monica', 'donna', 'rose',
+            'rosemary', 'autumn', 'caralyn', 'cindy', 'jackie', 'crystal', 'jessica',
+            'mary', 'anna', 'emma', 'sophia', 'olivia', 'ava', 'emily', 'abigail'
+        ]
         female_endings = ['a', 'ie', 'y', 'yn', 'en']
-        female_names = ['megan', 'amy', 'patricia', 'patricia', 'maxine', 'katie', 'monica', 'donna', 'rose', 'rosemary', 'autumn', 'caralyn']
 
         name_lower = name.lower()
+
+        # Check explicit lists first
+        if name_lower in male_names:
+            return False
         if name_lower in female_names:
             return True
 
+        # Fall back to endings heuristic
         for ending in female_endings:
             if name_lower.endswith(ending):
                 return True

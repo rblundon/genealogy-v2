@@ -93,3 +93,21 @@ export async function deleteObituary(obituaryId) {
 
   return response.json();
 }
+
+/**
+ * Reprocess an obituary using its stored extracted text
+ * @param {number} obituaryId - The obituary ID
+ * @returns {Promise<{status: string, obituary_id: number, persons_extracted: number, facts_extracted: number}>}
+ */
+export async function reprocessObituary(obituaryId) {
+  const response = await fetch(`${API_BASE_URL}/api/obituaries/${obituaryId}/reprocess`, {
+    method: 'POST',
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to reprocess obituary');
+  }
+
+  return response.json();
+}
