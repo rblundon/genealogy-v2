@@ -16,6 +16,7 @@ export function URLForm({ onSuccess, onError }) {
   const [submitError, setSubmitError] = useState(null);
   const [currentStep, setCurrentStep] = useState(0);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [verboseMode, setVerboseMode] = useState(true);
 
   const { isValid, error: validationError, warning } = useURLValidation(url);
 
@@ -60,7 +61,7 @@ export function URLForm({ onSuccess, onError }) {
     const startTime = Date.now();
 
     try {
-      const result = await processObituary(url);
+      const result = await processObituary(url, { verboseMode });
 
       // Add processing time to result
       const processingTimeMs = Date.now() - startTime;
@@ -70,6 +71,7 @@ export function URLForm({ onSuccess, onError }) {
         onSuccess({
           ...result,
           processing_time_ms: processingTimeMs,
+          verbose_mode: verboseMode,
         });
       }
     } catch (err) {
@@ -155,6 +157,40 @@ export function URLForm({ onSuccess, onError }) {
                 {submitError}
               </p>
             )}
+          </div>
+
+          {/* Verbose Mode Toggle */}
+          <div className="flex items-center justify-between py-2">
+            <div className="flex items-center">
+              <label htmlFor="verbose-mode" className="text-sm font-medium text-gray-700">
+                Verbose Mode
+              </label>
+              <span className="ml-2 text-xs text-gray-500">
+                (Show live fact extraction)
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setVerboseMode(!verboseMode)}
+              disabled={isSubmitting}
+              className={`
+                relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent
+                transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2
+                ${verboseMode ? 'bg-blue-600' : 'bg-gray-200'}
+                ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}
+              `}
+              role="switch"
+              aria-checked={verboseMode}
+              aria-labelledby="verbose-mode"
+            >
+              <span
+                className={`
+                  pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0
+                  transition duration-200 ease-in-out
+                  ${verboseMode ? 'translate-x-5' : 'translate-x-0'}
+                `}
+              />
+            </button>
           </div>
 
           {/* Submit Button */}

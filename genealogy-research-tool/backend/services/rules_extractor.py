@@ -6,7 +6,8 @@ Handles the ~95% of facts that follow standard obituary patterns.
 """
 
 import re
-from typing import List, Dict, Optional, Tuple
+import time
+from typing import List, Dict, Optional, Tuple, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -257,14 +258,18 @@ class RulesExtractor:
         re.IGNORECASE | re.DOTALL
     )
 
-    def __init__(self, death_year: Optional[int] = None):
+    def __init__(self, death_year: Optional[int] = None, step_delay: float = 0.0, on_facts_extracted: Optional[Callable] = None):
         """
         Initialize the rules extractor.
 
         Args:
             death_year: Year of death for the primary deceased (for age calculations)
+            step_delay: Delay in seconds between extraction steps (for verbose mode visualization)
+            on_facts_extracted: Callback function called after each extraction step with new facts
         """
         self.death_year = death_year
+        self.step_delay = step_delay
+        self.on_facts_extracted = on_facts_extracted
         self.persons: Dict[str, Person] = {}  # name -> Person
         self.facts: List[Fact] = []
         self.deceased_person: Optional[Person] = None
@@ -285,56 +290,79 @@ class RulesExtractor:
 
         # Step 1: Parse header (deceased info)
         self._parse_header(obituary_text)
+        self._notify_and_delay("Parsed header")
 
         # Step 2: Extract spouse relationship
         self._extract_spouse(obituary_text)
+        self._notify_and_delay("Extracted spouse")
 
         # Step 3: Extract parent relationships (children of deceased)
         self._extract_children(obituary_text)
+        self._notify_and_delay("Extracted children")
 
         # Step 4: Extract child relationships (parents of deceased)
         self._extract_parents(obituary_text)
+        self._notify_and_delay("Extracted parents")
 
         # Step 5: Extract grandchild relationships
         self._extract_grandchildren(obituary_text)
+        self._notify_and_delay("Extracted grandchildren")
 
         # Step 6: Extract great-grandchild relationships
         self._extract_great_grandchildren(obituary_text)
+        self._notify_and_delay("Extracted great-grandchildren")
 
         # Step 7: Extract sibling relationships (siblings of deceased)
         self._extract_siblings(obituary_text)
+        self._notify_and_delay("Extracted siblings")
 
         # Step 8: Extract in-law relationships
         self._extract_in_laws(obituary_text)
+        self._notify_and_delay("Extracted in-laws")
 
         # Step 8b: Extract uncle/aunt relationships
         self._extract_uncles(obituary_text)
+        self._notify_and_delay("Extracted uncles/aunts")
 
         # Step 8c: Extract great uncle/aunt relationships
         self._extract_great_uncles(obituary_text)
+        self._notify_and_delay("Extracted great uncles/aunts")
 
         # Step 8d: Extract marriage date
         self._extract_marriage_date(obituary_text)
+        self._notify_and_delay("Extracted marriage date")
 
         # Step 9: Extract deceased markers ("the late", "Reunited with")
         self._extract_deceased_markers(obituary_text)
+        self._notify_and_delay("Extracted deceased markers")
 
         # Step 10: Apply surname inference
         self._apply_surname_inference()
+        self._notify_and_delay("Applied surname inference")
 
         # Step 11: Apply sibling inference from in-laws
         self._apply_sibling_inference()
+        self._notify_and_delay("Applied sibling inference")
 
         # Step 12: Apply family structure inference (son-in-law + daughter = marriage, grandchildren parentage)
         self._apply_family_structure_inference()
+        self._notify_and_delay("Applied family structure inference")
 
         # Step 13: Generate all facts
         self._generate_facts()
+        self._notify_and_delay("Generated final facts")
 
         return {
             'persons': [self._person_to_dict(p) for p in self.persons.values()],
             'facts': [f.to_dict() for f in self.facts]
         }
+
+    def _notify_and_delay(self, step_name: str) -> None:
+        """Notify callback of new facts and optionally delay for visualization."""
+        if self.on_facts_extracted and self.facts:
+            self.on_facts_extracted(self.facts, step_name)
+        if self.step_delay > 0:
+            time.sleep(self.step_delay)
 
     def _parse_header(self, text: str) -> None:
         """Parse the obituary header for deceased info."""
@@ -343,20 +371,9 @@ class RulesExtractor:
         nickname = None
         maiden_name = None
         rest_of_text = None
+        original_text = text
 
-        # Find where the actual header starts (Surname, Given...)
-        # Handle preambles like "Milwaukee, Wisconsin Reginald Paradowski Obituary"
-        # Look for "Surname, Given Names" pattern followed by keywords like "Passed", "Beloved", etc.
-        header_start_match = re.search(
-            r'([A-Z][a-z\'-]+),\s+([A-Z][a-zA-Z.\s]+?)\s+'
-            r'(?:Passed|Beloved|Loving|Devoted|Peacefully|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|Reunited|Taken|On\s+\w+day)',
-            text,
-            re.IGNORECASE
-        )
-        if header_start_match:
-            text = text[header_start_match.start():]
-
-        # Try patterns in order of specificity
+        # Try patterns in order of specificity on original text first
         match = self.HEADER_FULL.match(text)
         if match:
             surname = match.group(1)
@@ -386,6 +403,64 @@ class RulesExtractor:
                         # Group 3 is the boundary word; rest is everything from boundary onward
                         boundary_pos = text.find(match.group(3))
                         rest_of_text = text[boundary_pos:]
+
+        # If no match found, try to find header after a preamble
+        # (e.g., "Milwaukee, Wisconsin Reginald Paradowski Obituary")
+        if not match:
+            # Only search within first 300 chars to avoid spurious matches later in text
+            search_text = original_text[:300]
+
+            # First try to find a maiden name header pattern (most specific)
+            # Pattern: "Surname, Given (NEE|Nee Maiden) Keyword"
+            header_start_match = re.search(
+                r'([A-Z][a-z\'-]+),\s+([A-Z][a-zA-Z.\s]+?)\s*'
+                r'\((?:Nee|NEE|née|nee)\s+[A-Z][a-z\'-]+\)\s*'
+                r'(?:Passed|Beloved|Loving|Devoted|Peacefully|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|Reunited|Taken|On\s+\w+day)',
+                search_text,
+                re.IGNORECASE
+            )
+
+            # If no maiden name header, try simple header pattern
+            if not header_start_match:
+                header_start_match = re.search(
+                    r'([A-Z][a-z\'-]+),\s+([A-Z][a-zA-Z.\s]+?)\s+'
+                    r'(?:Passed|Beloved|Loving|Devoted|Peacefully|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|Reunited|Taken|On\s+\w+day)',
+                    search_text,
+                    re.IGNORECASE
+                )
+
+            if header_start_match and header_start_match.start() > 0:
+                # Only use if there's actually a preamble to skip
+                text = original_text[header_start_match.start():]
+                # Retry header patterns on truncated text
+                match = self.HEADER_FULL.match(text)
+                if match:
+                    surname = match.group(1)
+                    given_names = match.group(2).strip()
+                    nickname = match.group(3)
+                    maiden_name = match.group(4)
+                    rest_of_text = match.group(5)
+                else:
+                    match = self.HEADER_NICK_ONLY.match(text)
+                    if match:
+                        surname = match.group(1)
+                        given_names = match.group(2).strip()
+                        nickname = match.group(3)
+                        rest_of_text = match.group(4)
+                    else:
+                        match = self.HEADER_MAIDEN_ONLY.match(text)
+                        if match:
+                            surname = match.group(1)
+                            given_names = match.group(2).strip()
+                            maiden_name = match.group(3)
+                            rest_of_text = match.group(4)
+                        else:
+                            match = self.HEADER_BASIC.match(text)
+                            if match:
+                                surname = match.group(1)
+                                given_names = match.group(2).strip()
+                                boundary_pos = text.find(match.group(3))
+                                rest_of_text = text[boundary_pos:]
 
         if match:
 
@@ -1345,7 +1420,24 @@ class RulesExtractor:
                     in_law_name = fact.related_name
 
                     # This in-law is a sibling of the spouse
-                    rel_type = "brother" if "brother" in fact.relationship_type else "sister"
+                    # Determine gender based on in-law's given name, not the relationship type
+                    in_law_person = self.persons.get(in_law_name)
+                    if in_law_person:
+                        in_law_given = in_law_person.given_names
+                    else:
+                        # Extract given name from full name
+                        in_law_given = in_law_name.split()[0] if in_law_name else ""
+
+                    # What is the in-law to the spouse? Use their actual gender.
+                    in_law_rel_type = "sister" if self._is_female_name(in_law_given) else "brother"
+
+                    # What is the spouse to the in-law? Use spouse's gender.
+                    spouse_person = self.persons.get(spouse_full)
+                    if spouse_person:
+                        spouse_given = spouse_person.given_names
+                    else:
+                        spouse_given = self.deceased_spouse_name or ""
+                    spouse_rel_type = "sister" if self._is_female_name(spouse_given) else "brother"
 
                     self.facts.append(Fact(
                         fact_type="relationship",
@@ -1353,7 +1445,7 @@ class RulesExtractor:
                         subject_role="in_law",
                         fact_value="sibling",
                         related_name=spouse_full,
-                        relationship_type=rel_type,
+                        relationship_type=in_law_rel_type,
                         is_inferred=True,
                         inference_basis=f"{self.deceased_person.full_name}'s {fact.relationship_type} is {spouse_full}'s sibling",
                         confidence_score=0.85
@@ -1366,11 +1458,30 @@ class RulesExtractor:
                         subject_role="spouse",
                         fact_value="sibling",
                         related_name=in_law_name,
-                        relationship_type="sister" if rel_type == "brother" else "brother",
+                        relationship_type=spouse_rel_type,
                         is_inferred=True,
                         inference_basis=f"Sibling of {in_law_name} (inferred from in-law relationship)",
                         confidence_score=0.85
                     ))
+
+                    # Infer maiden name for married female siblings of spouse
+                    # If Monica Clasen is Steven Blundon's sister, Monica's maiden name is Blundon
+                    if in_law_person and in_law_rel_type == "sister":
+                        spouse_person = self.persons.get(spouse_full)
+                        if spouse_person and spouse_person.surname:
+                            # Check if in-law has different surname (meaning married)
+                            if in_law_person.surname and in_law_person.surname != spouse_person.surname:
+                                if not in_law_person.maiden_name:
+                                    in_law_person.maiden_name = spouse_person.surname
+                                    self.facts.append(Fact(
+                                        fact_type="maiden_name",
+                                        subject_name=in_law_name,
+                                        subject_role="in_law",
+                                        fact_value=spouse_person.surname,
+                                        is_inferred=True,
+                                        inference_basis=f"Sister of {spouse_full}, maiden name from sibling",
+                                        confidence_score=0.80
+                                    ))
 
     def _apply_family_structure_inference(self) -> None:
         """

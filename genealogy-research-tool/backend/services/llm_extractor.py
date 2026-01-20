@@ -802,7 +802,8 @@ async def extract_facts_from_obituary(
 async def process_obituary_full(
     db: Session,
     obituary_cache_id: int,
-    obituary_text: str
+    obituary_text: str,
+    verbose_mode: bool = True
 ) -> Dict:
     """
     Hybrid extraction pipeline: Rules engine + LLM fallback.
@@ -810,50 +811,105 @@ async def process_obituary_full(
     Phase 1: Rules engine extracts deterministic patterns (~95% of facts)
     Phase 2: LLM can be used for ambiguous cases (optional)
 
+    Args:
+        db: Database session
+        obituary_cache_id: ID of the obituary in the cache
+        obituary_text: The obituary text to extract from
+        verbose_mode: If True, add delays between extraction steps for UI visualization
+
     Returns summary of extraction.
     """
     from services.rules_extractor import RulesExtractor
 
+    # Track facts we've already saved (for incremental saving)
+    saved_fact_keys = set()
+    extracted_facts = []
+
+    def save_facts_incrementally(facts, step_name):
+        """Callback to save facts after each extraction step."""
+        nonlocal saved_fact_keys, extracted_facts
+
+        for fact in facts:
+            fact_dict = fact.to_dict()
+
+            # Create deduplication key
+            dedup_key = (
+                fact_dict['fact_type'],
+                fact_dict['subject_name'],
+                fact_dict['fact_value'],
+                fact_dict.get('related_name'),
+                fact_dict.get('relationship_type')
+            )
+
+            if dedup_key in saved_fact_keys:
+                continue
+            saved_fact_keys.add(dedup_key)
+
+            db_fact = ExtractedFact(
+                obituary_cache_id=obituary_cache_id,
+                llm_cache_id=None,  # Rules-based, no LLM cache
+                fact_type=fact_dict['fact_type'],
+                subject_name=fact_dict['subject_name'],
+                subject_role=fact_dict.get('subject_role', 'other'),
+                fact_value=fact_dict['fact_value'],
+                related_name=fact_dict.get('related_name'),
+                relationship_type=fact_dict.get('relationship_type'),
+                extracted_context=fact_dict.get('extracted_context'),
+                is_inferred=fact_dict.get('is_inferred', False),
+                inference_basis=fact_dict.get('inference_basis'),
+                confidence_score=fact_dict.get('confidence_score', 1.0)
+            )
+            db.add(db_fact)
+            extracted_facts.append(db_fact)
+
+        # Commit after each step so facts are visible to polling
+        if extracted_facts:
+            db.commit()
+            print(f"[Rules] {step_name}: saved {len(extracted_facts)} facts so far")
+
     # Phase 1: Rules-based extraction (deterministic, fast, free)
-    extractor = RulesExtractor()
+    # Use 1 second delay in verbose mode for UI visualization
+    step_delay = 1.0 if verbose_mode else 0.0
+    extractor = RulesExtractor(
+        step_delay=step_delay,
+        on_facts_extracted=save_facts_incrementally if verbose_mode else None
+    )
     rules_result = extractor.extract_all(obituary_text)
 
-    # Convert rules result to ExtractedFact objects and save to DB
-    extracted_facts = []
-    seen_facts = set()  # Deduplication
+    # If not in verbose mode, save all facts at once (original behavior)
+    if not verbose_mode:
+        seen_facts = set()
+        for fact_data in rules_result['facts']:
+            dedup_key = (
+                fact_data['fact_type'],
+                fact_data['subject_name'],
+                fact_data['fact_value'],
+                fact_data.get('related_name'),
+                fact_data.get('relationship_type')
+            )
 
-    for fact_data in rules_result['facts']:
-        # Create deduplication key
-        dedup_key = (
-            fact_data['fact_type'],
-            fact_data['subject_name'],
-            fact_data['fact_value'],
-            fact_data.get('related_name'),
-            fact_data.get('relationship_type')
-        )
+            if dedup_key in seen_facts:
+                continue
+            seen_facts.add(dedup_key)
 
-        if dedup_key in seen_facts:
-            continue
-        seen_facts.add(dedup_key)
+            fact = ExtractedFact(
+                obituary_cache_id=obituary_cache_id,
+                llm_cache_id=None,
+                fact_type=fact_data['fact_type'],
+                subject_name=fact_data['subject_name'],
+                subject_role=fact_data.get('subject_role', 'other'),
+                fact_value=fact_data['fact_value'],
+                related_name=fact_data.get('related_name'),
+                relationship_type=fact_data.get('relationship_type'),
+                extracted_context=fact_data.get('extracted_context'),
+                is_inferred=fact_data.get('is_inferred', False),
+                inference_basis=fact_data.get('inference_basis'),
+                confidence_score=fact_data.get('confidence_score', 1.0)
+            )
+            db.add(fact)
+            extracted_facts.append(fact)
 
-        fact = ExtractedFact(
-            obituary_cache_id=obituary_cache_id,
-            llm_cache_id=None,  # Rules-based, no LLM cache
-            fact_type=fact_data['fact_type'],
-            subject_name=fact_data['subject_name'],
-            subject_role=fact_data.get('subject_role', 'other'),
-            fact_value=fact_data['fact_value'],
-            related_name=fact_data.get('related_name'),
-            relationship_type=fact_data.get('relationship_type'),
-            extracted_context=fact_data.get('extracted_context'),
-            is_inferred=fact_data.get('is_inferred', False),
-            inference_basis=fact_data.get('inference_basis'),
-            confidence_score=fact_data.get('confidence_score', 1.0)
-        )
-        db.add(fact)
-        extracted_facts.append(fact)
-
-    db.commit()
+        db.commit()
 
     # Refresh to get IDs
     for fact in extracted_facts:

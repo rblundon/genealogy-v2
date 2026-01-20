@@ -75,6 +75,7 @@ class ProcessObituaryRequest(BaseModel):
     """Request to process an obituary"""
     source_url: str
     obituary_text: Optional[str] = None  # Optional: if omitted, will fetch from URL
+    verbose_mode: bool = True  # If True, adds delays between extraction steps for UI visualization
 
 
 class PersonInfo(BaseModel):
@@ -297,11 +298,12 @@ async def process_obituary(
 
         obituary_id = cached.id
 
-        # Extract facts with LLM
+        # Extract facts with rules engine
         result = await process_obituary_full(
             db,
             obituary_id,
-            extracted_text
+            extracted_text,
+            verbose_mode=request.verbose_mode
         )
 
         # Success!
@@ -346,10 +348,12 @@ async def get_obituary(
     if not obituary:
         raise HTTPException(status_code=404, detail=f"Obituary {obituary_id} not found")
 
-    # Count facts and persons
-    facts_count = db.query(ExtractedFact).filter(
+    # Get facts (for verbose mode - show facts as they're extracted)
+    facts = db.query(ExtractedFact).filter(
         ExtractedFact.obituary_cache_id == obituary_id
-    ).count()
+    ).order_by(ExtractedFact.id).all()
+
+    facts_count = len(facts)
 
     persons_count = db.query(func.count(func.distinct(ExtractedFact.subject_name))).filter(
         ExtractedFact.obituary_cache_id == obituary_id
@@ -366,6 +370,8 @@ async def get_obituary(
         "llm_cost_usd": 0.0,  # TODO: Track actual LLM costs
         "extracted_text": obituary.extracted_text,
         "http_status_code": obituary.http_status_code,
+        # Verbose mode: include facts for live display during processing
+        "facts": [fact.to_dict() for fact in facts],
     }
 
 
@@ -393,11 +399,16 @@ async def delete_obituary(
 @app.post("/api/obituaries/{obituary_id}/reprocess")
 async def reprocess_obituary(
     obituary_id: int,
+    verbose_mode: bool = True,
     db: Session = Depends(get_db)
 ):
     """
     Reprocess an obituary using its stored extracted text.
     Deletes existing facts and re-runs the rules engine extraction.
+
+    Args:
+        obituary_id: The obituary ID to reprocess
+        verbose_mode: If True, adds delays between extraction steps for UI visualization
     """
     # Get obituary
     obituary = db.query(ObituaryCache).filter(
@@ -425,7 +436,8 @@ async def reprocess_obituary(
         result = await process_obituary_full(
             db,
             obituary_id,
-            obituary.extracted_text
+            obituary.extracted_text,
+            verbose_mode=verbose_mode
         )
 
         # Update status to completed

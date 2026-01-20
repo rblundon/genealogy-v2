@@ -10,15 +10,22 @@ const API_BASE_URL = getApiBaseUrl();
 /**
  * Process an obituary URL
  * @param {string} sourceUrl - The obituary URL to process
+ * @param {Object} options - Processing options
+ * @param {boolean} options.verboseMode - If true, adds delays between extraction steps for live visualization
  * @returns {Promise<{obituary_id: number, processing_status: string, persons_extracted: number, facts_extracted: number}>}
  */
-export async function processObituary(sourceUrl) {
+export async function processObituary(sourceUrl, options = {}) {
+  const { verboseMode = true } = options;
+
   const response = await fetch(`${API_BASE_URL}/api/obituaries/process`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ source_url: sourceUrl }),
+    body: JSON.stringify({
+      source_url: sourceUrl,
+      verbose_mode: verboseMode,
+    }),
   });
 
   if (!response.ok) {
@@ -97,10 +104,14 @@ export async function deleteObituary(obituaryId) {
 /**
  * Reprocess an obituary using its stored extracted text
  * @param {number} obituaryId - The obituary ID
+ * @param {Object} options - Processing options
+ * @param {boolean} options.verboseMode - If true, adds delays between extraction steps for live visualization
  * @returns {Promise<{status: string, obituary_id: number, persons_extracted: number, facts_extracted: number}>}
  */
-export async function reprocessObituary(obituaryId) {
-  const response = await fetch(`${API_BASE_URL}/api/obituaries/${obituaryId}/reprocess`, {
+export async function reprocessObituary(obituaryId, options = {}) {
+  const { verboseMode = true } = options;
+
+  const response = await fetch(`${API_BASE_URL}/api/obituaries/${obituaryId}/reprocess?verbose_mode=${verboseMode}`, {
     method: 'POST',
   });
 

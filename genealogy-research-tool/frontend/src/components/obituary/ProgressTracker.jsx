@@ -11,6 +11,7 @@ import {
 export function ProgressTracker({ obituaryId, initialResult, onComplete, onError }) {
   const [startTime] = useState(Date.now());
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [showFacts, setShowFacts] = useState(initialResult?.verbose_mode ?? true);
 
   // If we have initial result with completed status, use it directly
   const alreadyComplete = initialResult?.processing_status === 'completed' ||
@@ -229,6 +230,57 @@ export function ProgressTracker({ obituaryId, initialResult, onComplete, onError
             ))}
           </div>
         </div>
+
+        {/* Live Facts Display - show during processing */}
+        {obituary.facts && obituary.facts.length > 0 && (
+          <div className="mb-6">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center">
+                <h3 className="text-sm font-medium text-gray-700">
+                  Facts Extracted ({obituary.facts.length}):
+                </h3>
+                {isPolling && (
+                  <span className="ml-2 text-xs text-blue-600 animate-pulse">Live updating...</span>
+                )}
+              </div>
+              <button
+                onClick={() => setShowFacts(!showFacts)}
+                className="text-sm text-blue-600 hover:text-blue-800 focus:outline-none"
+              >
+                {showFacts ? 'Hide' : 'Show'}
+              </button>
+            </div>
+            {showFacts && (
+              <div className="max-h-64 overflow-y-auto border border-gray-200 rounded-md bg-gray-50">
+                <div className="divide-y divide-gray-200">
+                  {obituary.facts.map((fact, index) => (
+                    <div
+                      key={fact.id || index}
+                      className={`p-3 text-sm ${
+                        index === obituary.facts.length - 1 && isPolling
+                          ? 'bg-blue-50 animate-pulse'
+                          : ''
+                      }`}
+                    >
+                      <div className="flex items-start">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium mr-2 ${
+                          fact.is_inferred
+                            ? 'bg-yellow-100 text-yellow-800'
+                            : 'bg-green-100 text-green-800'
+                        }`}>
+                          {fact.fact_type?.replace(/_/g, ' ')}
+                        </span>
+                        <span className="text-gray-900 flex-1">
+                          {fact.description}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Elapsed Time */}
         <div className="text-sm text-gray-500">
