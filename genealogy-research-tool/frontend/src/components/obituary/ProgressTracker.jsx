@@ -272,7 +272,7 @@ export function ProgressTracker({ obituaryId, initialResult, onComplete, onError
                           {fact.fact_type?.replace(/_/g, ' ')}
                         </span>
                         <span className="text-gray-900 flex-1">
-                          {fact.description}
+                          {fact.description || `${fact.fact_type}: ${fact.fact_value}`}
                         </span>
                       </div>
                     </div>
