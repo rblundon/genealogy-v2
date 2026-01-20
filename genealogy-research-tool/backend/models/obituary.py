@@ -24,6 +24,8 @@ class ObituaryCache(Base):
         default='pending',
         index=True
     )
+    # Tracks current processing step for real-time UI updates
+    processing_step = Column(String(50), default=None)
     gramps_source_id = Column(String(50), index=True)
 
     # Relationships

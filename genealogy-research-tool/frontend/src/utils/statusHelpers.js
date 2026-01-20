@@ -1,9 +1,32 @@
 /**
- * Calculate progress percentage based on processing status
+ * Calculate progress percentage based on processing status and step
  * @param {string} status - Processing status from API
+ * @param {string} processingStep - Current processing step from backend
  * @returns {number} Progress percentage (0-100)
  */
-export function getProgressPercentage(status) {
+export function getProgressPercentage(status, processingStep = null) {
+  // If completed, return 100%
+  if (status === 'completed' || processingStep === 'completed') {
+    return 100;
+  }
+
+  // If failed, show progress at failure point
+  if (status === 'failed') {
+    return 0;
+  }
+
+  // Use processing step for more accurate progress
+  if (processingStep) {
+    const stepProgress = {
+      'validating': 10,
+      'fetching': 30,
+      'extracting': 60,
+      'storing': 90,
+    };
+    return stepProgress[processingStep] || 50;
+  }
+
+  // Fallback to status-based progress
   const statusMap = {
     'pending': 10,
     'processing': 50,
@@ -36,26 +59,55 @@ export function getStatusMessage(status, data = {}) {
 }
 
 /**
- * Get processing steps with completion status
+ * Get processing steps with completion status based on real backend step
  * @param {string} currentStatus - Current processing status
+ * @param {string} processingStep - Current processing step from backend
  * @returns {Array} Array of step objects with completion state
  */
-export function getProcessingSteps(currentStatus) {
+export function getProcessingSteps(currentStatus, processingStep = null) {
+  // Step order: validating -> fetching -> extracting -> storing -> completed
+  const stepOrder = ['validating', 'fetching', 'extracting', 'storing', 'completed'];
+
   const steps = [
-    { id: 'validate', label: 'Validating URL', status: 'complete' },
-    { id: 'cache', label: 'Checking cache', status: 'complete' },
-    { id: 'fetch', label: 'Fetching from Legacy.com', status: 'pending' },
-    { id: 'extract', label: 'Extracting facts with AI', status: 'pending' },
-    { id: 'store', label: 'Storing results', status: 'pending' },
+    { id: 'validating', label: 'Validating URL', status: 'pending' },
+    { id: 'fetching', label: 'Fetching from Legacy.com', status: 'pending' },
+    { id: 'extracting', label: 'Extracting facts', status: 'pending' },
+    { id: 'storing', label: 'Storing results', status: 'pending' },
   ];
 
-  // Mark steps as complete/active based on status
-  if (currentStatus === 'processing') {
-    steps[2].status = 'active'; // Fetching
-  } else if (currentStatus === 'completed') {
+  // If completed or failed, mark all steps appropriately
+  if (currentStatus === 'completed' || processingStep === 'completed') {
     steps.forEach(step => step.status = 'complete');
-  } else if (currentStatus === 'failed') {
-    steps[2].status = 'error';
+    return steps;
+  }
+
+  if (currentStatus === 'failed' || processingStep === 'failed') {
+    // Mark steps up to the failure point
+    const currentIndex = stepOrder.indexOf(processingStep);
+    steps.forEach((step, index) => {
+      if (index < currentIndex) {
+        step.status = 'complete';
+      } else if (index === currentIndex || (currentIndex === -1 && index === 0)) {
+        step.status = 'error';
+      }
+    });
+    return steps;
+  }
+
+  // Mark steps based on current processing step
+  if (processingStep) {
+    const currentIndex = stepOrder.indexOf(processingStep);
+    steps.forEach((step, index) => {
+      const stepIndex = stepOrder.indexOf(step.id);
+      if (stepIndex < currentIndex) {
+        step.status = 'complete';
+      } else if (stepIndex === currentIndex) {
+        step.status = 'active';
+      }
+    });
+  } else if (currentStatus === 'processing') {
+    // Fallback: if no processingStep, show first step as active
+    steps[0].status = 'active';
   }
 
   return steps;

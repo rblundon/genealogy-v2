@@ -155,14 +155,62 @@ async def root():
     }
 
 
-def run_fact_extraction_background(obituary_id: int, extracted_text: str, verbose_mode: bool):
+def update_processing_step(db, obituary_id: int, step: str):
+    """Update the processing step for real-time UI feedback."""
+    obituary = db.query(ObituaryCache).filter(ObituaryCache.id == obituary_id).first()
+    if obituary:
+        obituary.processing_step = step
+        db.commit()
+        print(f"[Background] Step: {step}")
+
+
+def run_full_pipeline_background(obituary_id: int, url: str, site: str, verbose_mode: bool, obituary_text: str = None):
     """
-    Background task to run fact extraction.
+    Background task to run the full pipeline: fetch + extract.
     Creates its own database session since background tasks run after response is sent.
     """
     from models import SessionLocal
     db = SessionLocal()
     try:
+        obituary = db.query(ObituaryCache).filter(ObituaryCache.id == obituary_id).first()
+        if not obituary:
+            print(f"[Background] Obituary {obituary_id} not found")
+            return
+
+        # Step 1: Fetch (if no text provided)
+        if obituary_text:
+            extracted_text = obituary_text
+            update_processing_step(db, obituary_id, "validating")
+        else:
+            update_processing_step(db, obituary_id, "fetching")
+
+            fetcher = ObituaryFetcher()
+            fetch_result = fetcher.fetch(url, site)
+
+            if not fetch_result['success']:
+                obituary.processing_status = 'failed'
+                obituary.fetch_error = fetch_result['error']
+                obituary.http_status_code = fetch_result['http_status_code']
+                obituary.processing_step = 'failed'
+                db.commit()
+                print(f"[Background] Fetch failed for obituary {obituary_id}: {fetch_result['error']}")
+                return
+
+            raw_html = fetch_result['raw_html']
+            extracted_text = fetch_result['extracted_text']
+            http_status = fetch_result['http_status_code']
+            content_hash_value = hash_url(extracted_text)
+
+            # Update obituary with fetched content
+            obituary.raw_html = raw_html
+            obituary.extracted_text = extracted_text
+            obituary.content_hash = content_hash_value
+            obituary.http_status_code = http_status
+            db.commit()
+
+        # Step 2: Extract facts
+        update_processing_step(db, obituary_id, "extracting")
+
         import asyncio
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -174,10 +222,60 @@ def run_fact_extraction_background(obituary_id: int, extracted_text: str, verbos
             verbose_mode=verbose_mode
         ))
 
+        # Step 3: Storing (brief step before completion)
+        update_processing_step(db, obituary_id, "storing")
+
+        # Mark as completed
+        obituary.processing_status = 'completed'
+        obituary.processing_step = 'completed'
+        db.commit()
+
+        print(f"[Background] Completed for obituary {obituary_id}: {result.get('facts_extracted', 0)} facts")
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        # Mark as failed
+        obituary = db.query(ObituaryCache).filter(ObituaryCache.id == obituary_id).first()
+        if obituary:
+            obituary.processing_status = 'failed'
+            obituary.processing_step = 'failed'
+            obituary.fetch_error = str(e)
+            db.commit()
+        print(f"[Background] Failed for obituary {obituary_id}: {e}")
+    finally:
+        db.close()
+
+
+def run_fact_extraction_background(obituary_id: int, extracted_text: str, verbose_mode: bool):
+    """
+    Background task to run fact extraction only (for reprocessing).
+    Creates its own database session since background tasks run after response is sent.
+    """
+    from models import SessionLocal
+    db = SessionLocal()
+    try:
+        update_processing_step(db, obituary_id, "extracting")
+
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        result = loop.run_until_complete(process_obituary_full(
+            db,
+            obituary_id,
+            extracted_text,
+            verbose_mode=verbose_mode
+        ))
+
+        # Step: Storing (brief step before completion)
+        update_processing_step(db, obituary_id, "storing")
+
         # Mark as completed
         obituary = db.query(ObituaryCache).filter(ObituaryCache.id == obituary_id).first()
         if obituary:
             obituary.processing_status = 'completed'
+            obituary.processing_step = 'completed'
             db.commit()
 
         print(f"[Background] Completed extraction for obituary {obituary_id}: {result.get('facts_extracted', 0)} facts")
@@ -189,6 +287,7 @@ def run_fact_extraction_background(obituary_id: int, extracted_text: str, verbos
         obituary = db.query(ObituaryCache).filter(ObituaryCache.id == obituary_id).first()
         if obituary:
             obituary.processing_status = 'failed'
+            obituary.processing_step = 'failed'
             obituary.fetch_error = str(e)
             db.commit()
         print(f"[Background] Failed extraction for obituary {obituary_id}: {e}")
@@ -272,69 +371,25 @@ async def process_obituary(
 
         # NEW or FAILED - Process obituary
 
-        # Determine if we need to fetch
-        need_fetch = (request.obituary_text is None or request.obituary_text.strip() == '')
+        # Determine if text was provided or we need to fetch
+        has_text = request.obituary_text and request.obituary_text.strip()
 
-        if need_fetch:
-            # Fetch from URL
-            fetcher = ObituaryFetcher()
-            fetch_result = fetcher.fetch(url, site)
-
-            if not fetch_result['success']:
-                # Store failed fetch in cache
-                if cached:
-                    cached.processing_status = 'failed'
-                    cached.fetch_error = fetch_result['error']
-                    cached.http_status_code = fetch_result['http_status_code']
-                else:
-                    cached = ObituaryCache(
-                        url=url,
-                        url_hash=url_hash_value,
-                        processing_status='failed',
-                        fetch_error=fetch_result['error'],
-                        http_status_code=fetch_result['http_status_code']
-                    )
-                    db.add(cached)
-
-                db.commit()
-
-                return {
-                    'status': 'error',
-                    'error': fetch_result['error'],
-                    'http_status_code': fetch_result['http_status_code']
-                }
-
-            # Success - use fetched content
-            raw_html = fetch_result['raw_html']
-            extracted_text = fetch_result['extracted_text']
-            content_hash_value = fetch_result['content_hash']
-            http_status = fetch_result['http_status_code']
-        else:
-            # Use provided text
-            raw_html = None
-            extracted_text = request.obituary_text
-            content_hash_value = hash_url(extracted_text)  # Reuse hash function
-            http_status = None
-
-        # Create or update cache entry
+        # Create or update cache entry with 'processing' status
         if cached:
-            # Update existing
-            cached.raw_html = raw_html
-            cached.extracted_text = extracted_text
-            cached.content_hash = content_hash_value
-            cached.http_status_code = http_status
+            # Update existing (retry after failure)
             cached.processing_status = 'processing'
+            cached.processing_step = 'validating'
             cached.fetch_error = None
+            if has_text:
+                cached.extracted_text = request.obituary_text
         else:
             # Create new
             cached = ObituaryCache(
                 url=url,
                 url_hash=url_hash_value,
-                content_hash=content_hash_value,
-                raw_html=raw_html,
-                extracted_text=extracted_text,
-                http_status_code=http_status,
-                processing_status='processing'
+                processing_status='processing',
+                processing_step='validating',
+                extracted_text=request.obituary_text if has_text else None
             )
             db.add(cached)
 
@@ -343,14 +398,15 @@ async def process_obituary(
 
         obituary_id = cached.id
 
-        # In verbose mode, run extraction in background so frontend can poll for live updates
+        # In verbose mode, run FULL pipeline (fetch + extract) in background
         if request.verbose_mode:
-            # Start background extraction
             background_tasks.add_task(
-                run_fact_extraction_background,
+                run_full_pipeline_background,
                 obituary_id,
-                extracted_text,
-                request.verbose_mode
+                url,
+                site,
+                request.verbose_mode,
+                request.obituary_text if has_text else None
             )
 
             # Return immediately so frontend can start polling
@@ -359,22 +415,46 @@ async def process_obituary(
                 'cache_hit': False,
                 'obituary_id': obituary_id,
                 'processing_status': 'processing',
+                'processing_step': 'validating',
                 'persons_extracted': 0,
                 'facts_extracted': 0,
                 'llm_cost_usd': 0.0,
-                'message': 'Processing started. Poll for updates to see facts appear in real-time.'
+                'message': 'Processing started. Poll for updates to see progress in real-time.'
             }
 
         # Non-verbose mode: run synchronously (original behavior)
+        # This path is used when verbose_mode=False
+        if not has_text:
+            fetcher = ObituaryFetcher()
+            fetch_result = fetcher.fetch(url, site)
+
+            if not fetch_result['success']:
+                cached.processing_status = 'failed'
+                cached.fetch_error = fetch_result['error']
+                cached.http_status_code = fetch_result['http_status_code']
+                db.commit()
+                return {
+                    'status': 'error',
+                    'error': fetch_result['error'],
+                    'http_status_code': fetch_result['http_status_code']
+                }
+
+            cached.raw_html = fetch_result['raw_html']
+            cached.extracted_text = fetch_result['extracted_text']
+            cached.content_hash = fetch_result['content_hash']
+            cached.http_status_code = fetch_result['http_status_code']
+            db.commit()
+
         result = await process_obituary_full(
             db,
             obituary_id,
-            extracted_text,
+            cached.extracted_text,
             verbose_mode=False
         )
 
         # Success!
         cached.processing_status = 'completed'
+        cached.processing_step = 'completed'
         db.commit()
 
         return {
@@ -430,6 +510,7 @@ async def get_obituary(
         "id": obituary.id,
         "url": obituary.url,
         "processing_status": obituary.processing_status or "completed",
+        "processing_step": obituary.processing_step,  # Real-time step for UI
         "fetch_error": obituary.fetch_error,
         "persons_extracted": persons_count,
         "facts_extracted": facts_count,

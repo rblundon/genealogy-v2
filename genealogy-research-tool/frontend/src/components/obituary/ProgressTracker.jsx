@@ -113,9 +113,9 @@ export function ProgressTracker({ obituaryId, initialResult, onComplete, onError
     );
   }
 
-  const progress = getProgressPercentage(obituary.processing_status);
+  const progress = getProgressPercentage(obituary.processing_status, obituary.processing_step);
   const statusMessage = getStatusMessage(obituary.processing_status, obituary);
-  const steps = getProcessingSteps(obituary.processing_status);
+  const steps = getProcessingSteps(obituary.processing_status, obituary.processing_step);
   const isComplete = obituary.processing_status === 'completed';
   const isFailed = obituary.processing_status === 'failed';
 

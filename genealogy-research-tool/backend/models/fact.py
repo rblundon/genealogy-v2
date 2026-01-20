@@ -49,6 +49,8 @@ class ExtractedFact(Base):
             'grandchild',
             'grandparent',
             'great_grandchild',
+            'niece_nephew',
+            'grand_niece_nephew',
             'in_law',
             'other'
         ),

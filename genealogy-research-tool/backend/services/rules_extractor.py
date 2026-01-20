@@ -1148,66 +1148,198 @@ class RulesExtractor:
                         ))
 
     def _parse_grandchildren_list(self, text: str, role: str) -> None:
-        """Parse grandchildren list with ages in parentheses."""
-        # Split by " and " or commas
-        entries = re.split(r'\s+and\s+|,\s*', text)
+        """Parse grandchildren list with ages in parentheses and shared surnames.
 
-        for entry in entries:
-            entry = entry.strip()
-            if not entry:
+        Handles patterns like:
+        - "Brian and Amy Hennen" -> Brian Hennen, Amy Hennen (shared surname)
+        - "Crystal (5) and Jessica (3) Paradowski" -> with ages and shared surname
+        - "Brian and Amy Hennen and Crystal and Jessica Paradowski" -> two family groups
+        """
+        # Strategy: Identify family group boundaries by finding "Surname and Given" patterns
+        # A surname followed by "and" followed by a given name indicates a new family group
+        #
+        # Example: "Brian and Amy Hennen and Crystal and Jessica Paradowski"
+        # Family groups: ["Brian and Amy Hennen", "Crystal and Jessica Paradowski"]
+
+        # First, try to split into family groups
+        # Look for pattern: "Surname and Given" which indicates family boundary
+        # We detect this by finding: [A-Z][a-z]+ and [A-Z][a-z]+ where first word
+        # looks like a surname (preceded by another name or at start)
+
+        family_groups = self._split_into_family_groups(text)
+
+        for group in family_groups:
+            group = group.strip()
+            if not group:
                 continue
 
-            # Try "Name (age)" pattern
-            match = re.match(r'([A-Z][a-zA-Z\.\'-]+)\s*\((\d+)\)', entry)
-            if match:
-                given = match.group(1)
-                age = int(match.group(2))
+            self._parse_single_family_group(group, role)
+
+    def _split_into_family_groups(self, text: str) -> List[str]:
+        """Split grandchildren text into family groups based on surname boundaries.
+
+        Example: "Brian and Amy Hennen and Crystal and Jessica Paradowski"
+        Returns: ["Brian and Amy Hennen", "Crystal and Jessica Paradowski"]
+        """
+        # Split by comma first (explicit separator)
+        if ',' in text:
+            return [g.strip() for g in text.split(',') if g.strip()]
+
+        # For "and"-separated lists, detect family boundaries
+        # Pattern: multiple given names followed by a surname, then "and", then more names
+        # Heuristic: "Surname and Given" indicates a boundary
+        #   - A word that could be a surname (capitalized, follows given names)
+        #   - Followed by "and"
+        #   - Followed by a capitalized word (new given name)
+
+        # Find all potential family groups by looking for "Surname and Given" boundaries
+        # Use regex to find: (word) and (Word) where we need to determine if first word is surname
+
+        words = text.split()
+        groups = []
+        current_group = []
+
+        i = 0
+        while i < len(words):
+            word = words[i]
+
+            # Check if this could be a surname followed by "and" and a new given name
+            # Condition: current_group has at least one name, word is capitalized,
+            # next word is "and", word after that is capitalized (new given name)
+            if (len(current_group) >= 2 and  # Need at least "Given Surname" in current group
+                word[0].isupper() and
+                i + 2 < len(words) and
+                words[i + 1].lower() == 'and' and
+                words[i + 2][0].isupper()):
+
+                # This word is likely a surname ending the current group
+                current_group.append(word)
+                groups.append(' '.join(current_group))
+                current_group = []
+                i += 2  # Skip "and"
+            else:
+                current_group.append(word)
+                i += 1
+
+        # Add the last group
+        if current_group:
+            groups.append(' '.join(current_group))
+
+        return groups if groups else [text]
+
+    def _parse_single_family_group(self, group: str, role: str) -> None:
+        """Parse a single family group like 'Brian and Amy Hennen'."""
+        group = group.strip()
+        if not group:
+            return
+
+        # Try to match: "Given1 and Given2 [and Given3...] Surname"
+        # where Surname is the last capitalized word
+        shared_surname_match = re.match(
+            r'^((?:[A-Z][a-z]+(?:\s*\(\d+\))?\s+and\s+)*[A-Z][a-z]+(?:\s*\(\d+\))?)\s+([A-Z][a-z]+)$',
+            group
+        )
+
+        if shared_surname_match:
+            # Multiple people sharing a surname
+            names_part = shared_surname_match.group(1)
+            surname = shared_surname_match.group(2)
+
+            # Extract individual names (may have ages)
+            name_entries = re.split(r'\s+and\s+', names_part)
+
+            for name_entry in name_entries:
+                name_entry = name_entry.strip()
+                if not name_entry:
+                    continue
+
+                # Check for age in parentheses
+                age_match = re.match(r'([A-Z][a-z]+)\s*\((\d+)\)', name_entry)
+                if age_match:
+                    given = age_match.group(1)
+                    age = int(age_match.group(2))
+                    birth_year = self.death_year - age if self.death_year else None
+                else:
+                    given = name_entry
+                    age = None
+                    birth_year = None
 
                 person = Person(
                     given_names=given,
+                    surname=surname,
                     role=role,
-                    birth_year_approx=self.death_year - age if self.death_year else None
+                    birth_year_approx=birth_year
                 )
                 self.persons[person.full_name] = person
 
-                # Create grandchild relationship
-                if self.deceased_person:
-                    self.facts.append(Fact(
-                        fact_type="relationship",
-                        subject_name=self.deceased_person.full_name,
-                        subject_role="deceased_primary",
-                        fact_value="grandchild",
-                        related_name=person.full_name,
-                        extracted_context=entry,
-                        confidence_score=1.0
-                    ))
-                    # Bidirectional
-                    self.facts.append(Fact(
-                        fact_type="relationship",
-                        subject_name=person.full_name,
-                        subject_role=role,
-                        fact_value="grandparent",
-                        related_name=self.deceased_person.full_name,
-                        relationship_type="grandmother" if self.deceased_person.maiden_name else "grandparent",
-                        extracted_context=entry,
-                        confidence_score=1.0
-                    ))
+                self._add_grandchild_facts(person, role, name_entry, age)
+        else:
+            # Single person or no shared surname pattern
+            # Check for "Given Surname" pattern
+            single_match = re.match(r'^([A-Z][a-z]+)(?:\s*\((\d+)\))?\s*([A-Z][a-z]+)?$', group)
+            if single_match:
+                given = single_match.group(1)
+                age = int(single_match.group(2)) if single_match.group(2) else None
+                surname = single_match.group(3)
+                birth_year = self.death_year - age if self.death_year and age else None
 
-                    # Birth year fact
-                    if person.birth_year_approx:
-                        self.facts.append(Fact(
-                            fact_type="person_birth_year_approx",
-                            subject_name=person.full_name,
-                            subject_role=role,
-                            fact_value=str(person.birth_year_approx),
-                            extracted_context=entry,
-                            is_inferred=True,
-                            inference_basis=f"Age {age} at time of death ({self.death_year})",
-                            confidence_score=0.75
-                        ))
+                person = Person(
+                    given_names=given,
+                    surname=surname,
+                    role=role,
+                    birth_year_approx=birth_year
+                )
+                self.persons[person.full_name] = person
+
+                self._add_grandchild_facts(person, role, group, age)
             else:
-                # Just a name
-                self._parse_name_list_simple(entry, role)
+                # Fall back: just extract names
+                for entry in re.split(r'\s+and\s+', group):
+                    entry = entry.strip()
+                    if entry and entry[0].isupper():
+                        person = Person(given_names=entry, role=role)
+                        self.persons[person.full_name] = person
+                        self._add_grandchild_facts(person, role, entry, None)
+
+    def _add_grandchild_facts(self, person: 'Person', role: str, context: str, age: Optional[int]) -> None:
+        """Helper to add grandchild relationship facts."""
+        if not self.deceased_person:
+            return
+
+        # Create grandchild relationship
+        self.facts.append(Fact(
+            fact_type="relationship",
+            subject_name=self.deceased_person.full_name,
+            subject_role="deceased_primary",
+            fact_value="grandchild",
+            related_name=person.full_name,
+            extracted_context=context,
+            confidence_score=1.0
+        ))
+        # Bidirectional
+        self.facts.append(Fact(
+            fact_type="relationship",
+            subject_name=person.full_name,
+            subject_role=role,
+            fact_value="grandparent",
+            related_name=self.deceased_person.full_name,
+            relationship_type="grandmother" if self.deceased_person.maiden_name else "grandparent",
+            extracted_context=context,
+            confidence_score=1.0
+        ))
+
+        # Birth year fact
+        if age and person.birth_year_approx:
+            self.facts.append(Fact(
+                fact_type="person_birth_year_approx",
+                subject_name=person.full_name,
+                subject_role=role,
+                fact_value=str(person.birth_year_approx),
+                extracted_context=context,
+                is_inferred=True,
+                inference_basis=f"Age {age} at time of death ({self.death_year})",
+                confidence_score=0.75
+            ))
 
     def _parse_name_list_simple(self, text: str, role: str) -> None:
         """Parse a simple list of names (comma or 'and' separated)."""
@@ -1666,6 +1798,130 @@ class RulesExtractor:
                                 inference_basis=f"Parent of grandchild {gc_name}",
                                 confidence_score=0.75
                             ))
+
+        # Inference 2b: Grandchildren parentage by surname matching
+        # If grandchildren have surnames, match them to children or children's spouses
+        # Example: "grandfather of Brian and Amy Hennen" - if only one child has surname Hennen,
+        # Brian and Amy are that child's children
+        if grandchildren and len(children) > 1:
+            # Build a map of surname -> (child_name, spouse_name or None)
+            # This maps each surname to which child "family unit" it belongs to
+            surname_to_child_family: Dict[str, List[tuple]] = {}
+
+            for child_name, child in children:
+                # Find child's spouse if any
+                child_spouse_name = None
+                for fact in self.facts:
+                    if fact.fact_type == "marriage":
+                        if fact.subject_name == child_name:
+                            child_spouse_name = fact.related_name
+                            break
+                        elif fact.related_name == child_name:
+                            child_spouse_name = fact.subject_name
+                            break
+
+                # Add child's surname to map
+                if child.surname:
+                    if child.surname not in surname_to_child_family:
+                        surname_to_child_family[child.surname] = []
+                    surname_to_child_family[child.surname].append((child_name, child_spouse_name))
+
+                # Add spouse's surname to map (if different)
+                if child_spouse_name:
+                    spouse = self.persons.get(child_spouse_name)
+                    if spouse and spouse.surname and spouse.surname != child.surname:
+                        if spouse.surname not in surname_to_child_family:
+                            surname_to_child_family[spouse.surname] = []
+                        surname_to_child_family[spouse.surname].append((child_name, child_spouse_name))
+
+            # Now check each grandchild's surname
+            for gc_name, gc in grandchildren:
+                if not gc.surname:
+                    continue
+
+                # Check if relationship already exists
+                relationship_exists = any(
+                    f.fact_type == "relationship" and
+                    f.subject_name == gc_name and f.fact_value == "parent"
+                    for f in self.facts
+                )
+
+                if relationship_exists:
+                    continue
+
+                # Look up this surname in our map
+                matching_families = surname_to_child_family.get(gc.surname, [])
+
+                # Only infer if exactly one family has this surname
+                if len(matching_families) == 1:
+                    parent_child_name, parent_spouse_name = matching_families[0]
+                    parent_child = self.persons.get(parent_child_name)
+                    parent_spouse = self.persons.get(parent_spouse_name) if parent_spouse_name else None
+
+                    # Determine which parent has the matching surname (that's likely the biological parent)
+                    if parent_child and parent_child.surname == gc.surname:
+                        # Child of deceased has matching surname
+                        primary_parent_name = parent_child_name
+                        primary_parent = parent_child
+                        secondary_parent_name = parent_spouse_name
+                        secondary_parent = parent_spouse
+                    elif parent_spouse and parent_spouse.surname == gc.surname:
+                        # Spouse of child has matching surname
+                        primary_parent_name = parent_spouse_name
+                        primary_parent = parent_spouse
+                        secondary_parent_name = parent_child_name
+                        secondary_parent = parent_child
+                    else:
+                        continue
+
+                    # Add relationship to primary parent (surname match)
+                    self.facts.append(Fact(
+                        fact_type="relationship",
+                        subject_name=gc_name,
+                        subject_role="grandchild",
+                        fact_value="parent",
+                        related_name=primary_parent_name,
+                        relationship_type="father" if primary_parent and not self._is_female_name(primary_parent.given_names) else "mother",
+                        is_inferred=True,
+                        inference_basis=f"Grandchild {gc_name} has surname {gc.surname}, matching {primary_parent_name}",
+                        confidence_score=0.85
+                    ))
+                    self.facts.append(Fact(
+                        fact_type="relationship",
+                        subject_name=primary_parent_name,
+                        subject_role=primary_parent.role if primary_parent else "other",
+                        fact_value="child",
+                        related_name=gc_name,
+                        relationship_type="son" if not self._is_female_name(gc.given_names) else "daughter",
+                        is_inferred=True,
+                        inference_basis=f"Parent of grandchild {gc_name} (surname match)",
+                        confidence_score=0.85
+                    ))
+
+                    # Add relationship to secondary parent (spouse) if exists
+                    if secondary_parent_name and secondary_parent:
+                        self.facts.append(Fact(
+                            fact_type="relationship",
+                            subject_name=gc_name,
+                            subject_role="grandchild",
+                            fact_value="parent",
+                            related_name=secondary_parent_name,
+                            relationship_type="mother" if self._is_female_name(secondary_parent.given_names) else "father",
+                            is_inferred=True,
+                            inference_basis=f"Grandchild {gc_name}'s parent {primary_parent_name} is married to {secondary_parent_name}",
+                            confidence_score=0.80
+                        ))
+                        self.facts.append(Fact(
+                            fact_type="relationship",
+                            subject_name=secondary_parent_name,
+                            subject_role=secondary_parent.role if secondary_parent else "in_law",
+                            fact_value="child",
+                            related_name=gc_name,
+                            relationship_type="son" if not self._is_female_name(gc.given_names) else "daughter",
+                            is_inferred=True,
+                            inference_basis=f"Parent of grandchild {gc_name} (spouse of {primary_parent_name})",
+                            confidence_score=0.80
+                        ))
 
         # Inference 3: Maiden names for married daughters
         # If a daughter is married (has different surname), her maiden name is parent's surname
