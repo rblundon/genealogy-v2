@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -155,9 +155,51 @@ async def root():
     }
 
 
+def run_fact_extraction_background(obituary_id: int, extracted_text: str, verbose_mode: bool):
+    """
+    Background task to run fact extraction.
+    Creates its own database session since background tasks run after response is sent.
+    """
+    from models import SessionLocal
+    db = SessionLocal()
+    try:
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        result = loop.run_until_complete(process_obituary_full(
+            db,
+            obituary_id,
+            extracted_text,
+            verbose_mode=verbose_mode
+        ))
+
+        # Mark as completed
+        obituary = db.query(ObituaryCache).filter(ObituaryCache.id == obituary_id).first()
+        if obituary:
+            obituary.processing_status = 'completed'
+            db.commit()
+
+        print(f"[Background] Completed extraction for obituary {obituary_id}: {result.get('facts_extracted', 0)} facts")
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        # Mark as failed
+        obituary = db.query(ObituaryCache).filter(ObituaryCache.id == obituary_id).first()
+        if obituary:
+            obituary.processing_status = 'failed'
+            obituary.fetch_error = str(e)
+            db.commit()
+        print(f"[Background] Failed extraction for obituary {obituary_id}: {e}")
+    finally:
+        db.close()
+
+
 @app.post("/api/obituaries/process")
 async def process_obituary(
     request: ProcessObituaryRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
     """
@@ -172,6 +214,9 @@ async def process_obituary(
     - If URL failed before (status=failed): Retry processing
     - If URL is processing: Return current status
     - If new URL: Fetch, extract, store
+
+    In verbose mode, returns immediately and extracts facts in background
+    so the frontend can poll and see facts appear in real-time.
     """
     try:
         # Validate URL
@@ -298,12 +343,34 @@ async def process_obituary(
 
         obituary_id = cached.id
 
-        # Extract facts with rules engine
+        # In verbose mode, run extraction in background so frontend can poll for live updates
+        if request.verbose_mode:
+            # Start background extraction
+            background_tasks.add_task(
+                run_fact_extraction_background,
+                obituary_id,
+                extracted_text,
+                request.verbose_mode
+            )
+
+            # Return immediately so frontend can start polling
+            return {
+                'status': 'success',
+                'cache_hit': False,
+                'obituary_id': obituary_id,
+                'processing_status': 'processing',
+                'persons_extracted': 0,
+                'facts_extracted': 0,
+                'llm_cost_usd': 0.0,
+                'message': 'Processing started. Poll for updates to see facts appear in real-time.'
+            }
+
+        # Non-verbose mode: run synchronously (original behavior)
         result = await process_obituary_full(
             db,
             obituary_id,
             extracted_text,
-            verbose_mode=request.verbose_mode
+            verbose_mode=False
         )
 
         # Success!
@@ -400,6 +467,7 @@ async def delete_obituary(
 async def reprocess_obituary(
     obituary_id: int,
     verbose_mode: bool = True,
+    background_tasks: BackgroundTasks = None,
     db: Session = Depends(get_db)
 ):
     """
@@ -421,6 +489,8 @@ async def reprocess_obituary(
     if not obituary.extracted_text:
         raise HTTPException(status_code=400, detail="No extracted text available for reprocessing")
 
+    extracted_text = obituary.extracted_text
+
     try:
         # Delete existing facts
         db.query(ExtractedFact).filter(
@@ -432,12 +502,30 @@ async def reprocess_obituary(
         obituary.processing_status = 'processing'
         db.commit()
 
-        # Re-run fact extraction
+        # In verbose mode, run extraction in background for real-time display
+        if verbose_mode and background_tasks:
+            background_tasks.add_task(
+                run_fact_extraction_background,
+                obituary_id,
+                extracted_text,
+                verbose_mode
+            )
+
+            return {
+                'status': 'success',
+                'obituary_id': obituary_id,
+                'processing_status': 'processing',
+                'persons_extracted': 0,
+                'facts_extracted': 0,
+                'message': 'Reprocessing started. Poll for updates to see facts appear in real-time.'
+            }
+
+        # Non-verbose mode: run synchronously
         result = await process_obituary_full(
             db,
             obituary_id,
-            obituary.extracted_text,
-            verbose_mode=verbose_mode
+            extracted_text,
+            verbose_mode=False
         )
 
         # Update status to completed

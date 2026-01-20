@@ -14,8 +14,9 @@ export function ProgressTracker({ obituaryId, initialResult, onComplete, onError
   const [showFacts, setShowFacts] = useState(initialResult?.verbose_mode ?? true);
 
   // If we have initial result with completed status, use it directly
-  const alreadyComplete = initialResult?.processing_status === 'completed' ||
-                          initialResult?.status === 'success';
+  // Note: Don't check status === 'success' alone, as async processing returns
+  // {status: 'success', processing_status: 'processing'} for background tasks
+  const alreadyComplete = initialResult?.processing_status === 'completed';
 
   // Polling function
   const fetchStatus = useCallback(
