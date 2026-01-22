@@ -122,3 +122,65 @@ export async function reprocessObituary(obituaryId, options = {}) {
 
   return response.json();
 }
+
+/**
+ * Get all identified people
+ * @param {number} minConfidence - Minimum confidence score (0.0-1.0)
+ * @param {number} minSources - Minimum number of source obituaries
+ * @returns {Promise<{count: number, people: Array}>}
+ */
+export async function getPeople(minConfidence = 0.70, minSources = 1) {
+  const response = await fetch(
+    `${API_BASE_URL}/api/people?min_sources=${minSources}`
+  );
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to fetch people');
+  }
+
+  const data = await response.json();
+
+  // Filter by confidence on client side since backend only filters by min_sources
+  const filteredPeople = data.people.filter(p => (p.confidence || 0) >= minConfidence);
+
+  return {
+    count: filteredPeople.length,
+    people: filteredPeople
+  };
+}
+
+/**
+ * Get detailed information about an identified person
+ * @param {number} personId - The person ID
+ * @returns {Promise<Object>} Person details with facts and sources
+ */
+export async function getPersonDetail(personId) {
+  const response = await fetch(`${API_BASE_URL}/api/people/${personId}`);
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to fetch person details');
+  }
+
+  return response.json();
+}
+
+/**
+ * Get people ready for Gramps sync
+ * @param {number} minConfidence - Minimum confidence score (default: 0.80)
+ * @param {number} minSources - Minimum number of sources (default: 2)
+ * @returns {Promise<{count: number, people: Array}>}
+ */
+export async function getPeopleReadyForSync(minConfidence = 0.80, minSources = 2) {
+  const response = await fetch(
+    `${API_BASE_URL}/api/people/ready-for-sync?min_confidence=${minConfidence}&min_sources=${minSources}`
+  );
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to fetch people ready for sync');
+  }
+
+  return response.json();
+}
