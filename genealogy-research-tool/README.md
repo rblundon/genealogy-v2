@@ -13,11 +13,11 @@ curl -X POST "http://localhost:8000/api/obituaries/process" \
   -H "Content-Type: application/json" \
   -d '{"obituary_text": "...", "source_url": "..."}' | python3 -m json.tool
 
-# 2. Generate clusters
-curl -X POST http://localhost:8000/api/clusters/generate | python3 -m json.tool
+# 2. Generate people
+curl -X POST http://localhost:8000/api/people/generate | python3 -m json.tool
 
 # 3. Create people in Gramps
-curl -X POST "http://localhost:8000/api/clusters/{ID}/create-in-gramps?create_relationships=true" | \
+curl -X POST "http://localhost:8000/api/people/{ID}/create-in-gramps?create_relationships=true" | \
   python3 -m json.tool
 ```
 

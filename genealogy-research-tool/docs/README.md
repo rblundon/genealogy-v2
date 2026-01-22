@@ -31,11 +31,11 @@ curl -X POST "http://localhost:8000/api/obituaries/process" \
   -H "Content-Type: application/json" \
   -d '{"obituary_text": "...", "source_url": "http://example.com/obit"}' | python3 -m json.tool
 
-# 2. Generate person clusters
-curl -X POST http://localhost:8000/api/clusters/generate | python3 -m json.tool
+# 2. Generate identified people
+curl -X POST http://localhost:8000/api/people/generate | python3 -m json.tool
 
 # 3. Create person in Gramps with relationships
-curl -X POST "http://localhost:8000/api/clusters/{ID}/create-in-gramps?create_relationships=true" | \
+curl -X POST "http://localhost:8000/api/people/{ID}/create-in-gramps?create_relationships=true" | \
   python3 -m json.tool
 ```
 
@@ -127,10 +127,10 @@ genealogy-research-tool/
 
 ## Common Workflows
 
-### View All Clusters
+### View All People
 ```bash
-curl -s http://localhost:8000/api/clusters | python3 -m json.tool | \
-  jq '.clusters[] | {cluster_id, canonical_name, source_count, gramps_person_id}'
+curl -s http://localhost:8000/api/people | python3 -m json.tool | \
+  jq '.people[] | {person_id, canonical_name, source_count, gramps_person_id}'
 ```
 
 ### Check Gramps Connectivity
@@ -143,9 +143,9 @@ curl http://localhost:8000/api/gramps/health | python3 -m json.tool
 curl http://localhost:8000/api/gramps/audit-trail | python3 -m json.tool
 ```
 
-### Debug a Cluster
+### Debug a Person
 ```bash
-curl http://localhost:8000/api/clusters/85 | python3 -m json.tool
+curl http://localhost:8000/api/people/85 | python3 -m json.tool
 ```
 
 ---
