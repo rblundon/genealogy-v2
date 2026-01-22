@@ -8,7 +8,7 @@
 
 ## Table of Contents
 1. [Core Processing APIs](#core-processing-apis)
-2. [Cluster Management APIs](#cluster-management-apis)
+2. [People APIs](#people-apis)
 3. [Gramps Integration APIs](#gramps-integration-apis)
 4. [Person Creation APIs](#person-creation-apis)
 5. [Citation & Audit APIs](#citation--audit-apis)
@@ -113,63 +113,63 @@ curl http://localhost:8000/api/obituaries/18/facts | python3 -m json.tool
 
 ---
 
-## Cluster Management APIs
+## People APIs
 
-### Generate Clusters
+### Generate People
 
-**Endpoint:** `POST /api/clusters/generate`
+**Endpoint:** `POST /api/people/generate`
 
-**Description:** Cluster all extracted facts across obituaries using fuzzy matching
+**Description:** Group all extracted facts across obituaries using fuzzy matching to identify people
 
 **Request:**
 ```bash
-curl -X POST http://localhost:8000/api/clusters/generate | python3 -m json.tool
+curl -X POST http://localhost:8000/api/people/generate | python3 -m json.tool
 ```
 
 **Response:**
 ```json
 {
   "status": "success",
-  "clusters_created": 12,
+  "people_created": 12,
   "summary": {
-    "total_clusters": 12,
-    "multi_source_clusters": 8,
-    "clusters_with_variants": 3
+    "total_people": 12,
+    "multi_source_people": 8,
+    "people_with_variants": 3
   }
 }
 ```
 
 ---
 
-### List All Clusters
+### List All People
 
-**Endpoint:** `GET /api/clusters`
+**Endpoint:** `GET /api/people`
 
-**Description:** Get all person clusters with summary information
+**Description:** Get all identified people with summary information
 
 **Request:**
 ```bash
-# Get all clusters
-curl http://localhost:8000/api/clusters | python3 -m json.tool
+# Get all people
+curl http://localhost:8000/api/people | python3 -m json.tool
 
 # Pretty format with jq
-curl -s http://localhost:8000/api/clusters | python3 -m json.tool | \
-  jq '.clusters[] | {cluster_id, canonical_name, source_count, fact_count, gramps_person_id}'
+curl -s http://localhost:8000/api/people | python3 -m json.tool | \
+  jq '.people[] | {person_id, canonical_name, source_count, fact_count, gramps_person_id}'
 ```
 
 **Response:**
 ```json
 {
-  "cluster_count": 12,
-  "clusters": [
+  "count": 12,
+  "people": [
     {
-      "cluster_id": 85,
+      "person_id": 85,
       "canonical_name": "Patricia L. Blundon",
       "name_variants": ["Patricia Blundon", "Patricia L. Blundon"],
       "source_count": 3,
       "fact_count": 19,
       "confidence": 0.93,
-      "cluster_status": "verified",
+      "status": "verified",
       "gramps_person_id": "I0085"
     }
   ]
@@ -178,24 +178,24 @@ curl -s http://localhost:8000/api/clusters | python3 -m json.tool | \
 
 ---
 
-### Get Cluster Details
+### Get Person Details
 
-**Endpoint:** `GET /api/clusters/{cluster_id}`
+**Endpoint:** `GET /api/people/{person_id}`
 
-**Description:** Get detailed information about a specific cluster including all facts grouped by type
+**Description:** Get detailed information about a specific person including all facts grouped by type
 
 **Request:**
 ```bash
-curl http://localhost:8000/api/clusters/85 | python3 -m json.tool
+curl http://localhost:8000/api/people/85 | python3 -m json.tool
 
 # Save to file for inspection
-curl -s http://localhost:8000/api/clusters/85 | python3 -m json.tool > cluster_85.json
+curl -s http://localhost:8000/api/people/85 | python3 -m json.tool > person_85.json
 ```
 
 **Response:**
 ```json
 {
-  "cluster_id": 85,
+  "person_id": 85,
   "canonical_name": "Patricia L. Blundon",
   "name_variants": ["Patricia Blundon", "Patricia L. Blundon"],
   "maiden_names": ["Kaczmarowski"],
@@ -215,11 +215,11 @@ curl -s http://localhost:8000/api/clusters/85 | python3 -m json.tool > cluster_8
 
 ---
 
-### Get Clusters Ready for Creation
+### Get People Ready for Sync
 
-**Endpoint:** `GET /api/clusters/ready-for-creation`
+**Endpoint:** `GET /api/people/ready-for-sync`
 
-**Description:** Get clusters that meet criteria for automatic person creation
+**Description:** Get people that meet criteria for syncing to Gramps
 
 **Parameters:**
 - `min_confidence` (float, default: 0.80) - Minimum confidence score
@@ -228,14 +228,14 @@ curl -s http://localhost:8000/api/clusters/85 | python3 -m json.tool > cluster_8
 **Request:**
 ```bash
 # Default thresholds (confidence >= 0.80, sources >= 2)
-curl http://localhost:8000/api/clusters/ready-for-creation | python3 -m json.tool
+curl http://localhost:8000/api/people/ready-for-sync | python3 -m json.tool
 
 # Custom thresholds
-curl "http://localhost:8000/api/clusters/ready-for-creation?min_confidence=0.70&min_sources=1" | \
+curl "http://localhost:8000/api/people/ready-for-sync?min_confidence=0.70&min_sources=1" | \
   python3 -m json.tool
 
 # High-confidence only
-curl "http://localhost:8000/api/clusters/ready-for-creation?min_confidence=0.90&min_sources=3" | \
+curl "http://localhost:8000/api/people/ready-for-sync?min_confidence=0.90&min_sources=3" | \
   python3 -m json.tool
 ```
 
@@ -243,9 +243,9 @@ curl "http://localhost:8000/api/clusters/ready-for-creation?min_confidence=0.90&
 ```json
 {
   "count": 6,
-  "clusters": [
+  "people": [
     {
-      "cluster_id": 85,
+      "person_id": 85,
       "canonical_name": "Patricia L. Blundon",
       "confidence": 0.93,
       "source_count": 3,
@@ -381,22 +381,22 @@ curl "http://localhost:8000/api/gramps/person/I0071" | python3 -m json.tool
 
 ---
 
-### Find Gramps Matches for Cluster
+### Find Gramps Matches for Person
 
-**Endpoint:** `GET /api/clusters/{cluster_id}/gramps-matches`
+**Endpoint:** `GET /api/people/{person_id}/gramps-matches`
 
-**Description:** Find potential matching people in Gramps for a cluster
+**Description:** Find potential matching people in Gramps for an identified person
 
 **Request:**
 ```bash
-curl http://localhost:8000/api/clusters/85/gramps-matches | python3 -m json.tool
+curl http://localhost:8000/api/people/85/gramps-matches | python3 -m json.tool
 ```
 
 **Response:**
 ```json
 {
-  "cluster_id": 85,
-  "cluster_name": "Patricia L. Blundon",
+  "person_id": 85,
+  "person_name": "Patricia L. Blundon",
   "matches_found": 1,
   "matches": [
     {
@@ -415,22 +415,22 @@ curl http://localhost:8000/api/clusters/85/gramps-matches | python3 -m json.tool
 
 ## Person Creation APIs
 
-### Preview Person Creation
+### Preview Person Sync
 
-**Endpoint:** `GET /api/clusters/{cluster_id}/creation-preview`
+**Endpoint:** `GET /api/people/{person_id}/sync-preview`
 
 **Description:** Preview what would be created in Gramps without making changes
 
 **Request:**
 ```bash
-curl http://localhost:8000/api/clusters/85/creation-preview | python3 -m json.tool
+curl http://localhost:8000/api/people/85/sync-preview | python3 -m json.tool
 ```
 
 **Response:**
 ```json
 {
-  "cluster_id": 85,
-  "cluster_name": "Patricia L. Blundon",
+  "person_id": 85,
+  "person_name": "Patricia L. Blundon",
   "confidence": 0.93,
   "source_count": 3,
   "person_data": {
@@ -464,9 +464,9 @@ curl http://localhost:8000/api/clusters/85/creation-preview | python3 -m json.to
 
 ### Create Person in Gramps
 
-**Endpoint:** `POST /api/clusters/{cluster_id}/create-in-gramps`
+**Endpoint:** `POST /api/people/{person_id}/create-in-gramps`
 
-**Description:** Create a new person in Gramps Web from cluster data
+**Description:** Create a new person in Gramps Web from identified person data
 
 **Parameters:**
 - `create_relationships` (boolean, default: true) - Whether to create family relationships
@@ -474,11 +474,11 @@ curl http://localhost:8000/api/clusters/85/creation-preview | python3 -m json.to
 **Request:**
 ```bash
 # Create person with relationships
-curl -X POST "http://localhost:8000/api/clusters/85/create-in-gramps?create_relationships=true" | \
+curl -X POST "http://localhost:8000/api/people/85/create-in-gramps?create_relationships=true" | \
   python3 -m json.tool
 
 # Create person without relationships
-curl -X POST "http://localhost:8000/api/clusters/85/create-in-gramps?create_relationships=false" | \
+curl -X POST "http://localhost:8000/api/people/85/create-in-gramps?create_relationships=false" | \
   python3 -m json.tool
 ```
 
@@ -486,8 +486,8 @@ curl -X POST "http://localhost:8000/api/clusters/85/create-in-gramps?create_rela
 ```json
 {
   "status": "success",
-  "cluster_id": 85,
-  "cluster_name": "Patricia L. Blundon",
+  "person_id": 85,
+  "person_name": "Patricia L. Blundon",
   "gramps_person_id": "I0085",
   "gramps_handle": "...",
   "created": true,
@@ -510,11 +510,11 @@ curl -X POST "http://localhost:8000/api/clusters/85/create-in-gramps?create_rela
 
 ---
 
-### Link Cluster to Existing Gramps Person
+### Link Person to Existing Gramps Person
 
-**Endpoint:** `POST /api/clusters/{cluster_id}/link-to-gramps`
+**Endpoint:** `POST /api/people/{person_id}/link-gramps`
 
-**Description:** Link cluster to an existing person in Gramps and create citations
+**Description:** Link identified person to an existing person in Gramps and create citations
 
 **Parameters:**
 - `gramps_person_id` (string, required) - Gramps person ID (e.g., "I0071")
@@ -522,7 +522,9 @@ curl -X POST "http://localhost:8000/api/clusters/85/create-in-gramps?create_rela
 
 **Request:**
 ```bash
-curl -X POST "http://localhost:8000/api/clusters/52/link-to-gramps?gramps_person_id=I0071&confidence=high" | \
+curl -X POST "http://localhost:8000/api/people/52/link-gramps" \
+  -H "Content-Type: application/json" \
+  -d '{"gramps_person_id": "I0071", "gramps_handle": "abc123", "confidence": "high"}' | \
   python3 -m json.tool
 ```
 
@@ -530,8 +532,8 @@ curl -X POST "http://localhost:8000/api/clusters/52/link-to-gramps?gramps_person
 ```json
 {
   "status": "success",
-  "cluster_id": 52,
-  "cluster_name": "Ryan Blundon",
+  "person_id": 52,
+  "person_name": "Ryan Blundon",
   "gramps_person_id": "I0071",
   "obituaries_processed": 3,
   "citations_created": 3,
@@ -542,23 +544,23 @@ curl -X POST "http://localhost:8000/api/clusters/52/link-to-gramps?gramps_person
 
 ---
 
-### Unlink Cluster from Gramps
+### Unlink Person from Gramps
 
-**Endpoint:** `DELETE /api/clusters/{cluster_id}/gramps-link`
+**Endpoint:** `DELETE /api/people/{person_id}/gramps-link`
 
-**Description:** Remove Gramps link from cluster (does not delete from Gramps)
+**Description:** Remove Gramps link from person (does not delete from Gramps)
 
 **Request:**
 ```bash
-curl -X DELETE "http://localhost:8000/api/clusters/85/gramps-link" | python3 -m json.tool
+curl -X DELETE "http://localhost:8000/api/people/85/gramps-link" | python3 -m json.tool
 ```
 
 **Response:**
 ```json
 {
   "status": "success",
-  "cluster_id": 85,
-  "cluster_name": "Patricia L. Blundon",
+  "person_id": 85,
+  "person_name": "Patricia L. Blundon",
   "unlinked": true,
   "gramps_person_id": null
 }
@@ -568,21 +570,21 @@ curl -X DELETE "http://localhost:8000/api/clusters/85/gramps-link" | python3 -m 
 
 ## Citation & Audit APIs
 
-### Get Cluster Citations
+### Get Person Citations
 
-**Endpoint:** `GET /api/clusters/{cluster_id}/citations`
+**Endpoint:** `GET /api/people/{person_id}/citations`
 
-**Description:** Get all citations created for a cluster
+**Description:** Get all citations created for a person
 
 **Request:**
 ```bash
-curl http://localhost:8000/api/clusters/52/citations | python3 -m json.tool
+curl http://localhost:8000/api/people/52/citations | python3 -m json.tool
 ```
 
 **Response:**
 ```json
 {
-  "cluster_id": 52,
+  "person_id": 52,
   "citation_count": 3,
   "citations": [
     {
@@ -747,12 +749,12 @@ podman exec -it genealogy-mariadb mysql -u genealogy -pgenealogypass genealogy_c
 
 ### Common SQL Queries
 ```sql
--- Show all clusters
+-- Show all identified people
 SELECT id, canonical_name, source_count, fact_count, gramps_person_id
 FROM person_clusters
 ORDER BY source_count DESC;
 
--- Show clusters with name variants
+-- Show people with name variants
 SELECT id, canonical_name, name_variants
 FROM person_clusters
 WHERE name_variants IS NOT NULL;
@@ -784,7 +786,7 @@ SELECT
 FROM llm_cache
 GROUP BY llm_provider, model_version;
 
--- Show clusters linked to Gramps
+-- Show people linked to Gramps
 SELECT
     pc.canonical_name,
     pc.gramps_person_id,
@@ -807,18 +809,18 @@ from sqlalchemy import func
 
 db = next(get_db())
 
-# Count clusters
-cluster_count = db.query(PersonCluster).count()
-print(f'Total clusters: {cluster_count}')
+# Count people
+people_count = db.query(PersonCluster).count()
+print(f'Total people: {people_count}')
 
-# Show clusters with Gramps links
+# Show people with Gramps links
 gramps_linked = db.query(PersonCluster).filter(
     PersonCluster.gramps_person_id.isnot(None)
 ).all()
 
-print(f'\nClusters in Gramps: {len(gramps_linked)}')
-for cluster in gramps_linked:
-    print(f'  {cluster.canonical_name} -> {cluster.gramps_person_id}')
+print(f'\nPeople in Gramps: {len(gramps_linked)}')
+for person in gramps_linked:
+    print(f'  {person.canonical_name} -> {person.gramps_person_id}')
 
 # Count facts by type
 fact_counts = db.query(
@@ -890,17 +892,17 @@ curl -X POST "http://localhost:8000/api/obituaries/process" \
   -H "Content-Type: application/json" \
   -d '{"obituary_text": "...", "source_url": "..."}' | python3 -m json.tool
 
-# 2. Generate clusters
-curl -X POST http://localhost:8000/api/clusters/generate | python3 -m json.tool
+# 2. Generate people
+curl -X POST http://localhost:8000/api/people/generate | python3 -m json.tool
 
-# 3. View ready for creation
-curl http://localhost:8000/api/clusters/ready-for-creation | python3 -m json.tool
+# 3. View ready for sync
+curl http://localhost:8000/api/people/ready-for-sync | python3 -m json.tool
 
 # 4. Preview specific person
-curl http://localhost:8000/api/clusters/85/creation-preview | python3 -m json.tool
+curl http://localhost:8000/api/people/85/sync-preview | python3 -m json.tool
 
 # 5. Create person
-curl -X POST "http://localhost:8000/api/clusters/85/create-in-gramps?create_relationships=true" | \
+curl -X POST "http://localhost:8000/api/people/85/create-in-gramps?create_relationships=true" | \
   python3 -m json.tool
 
 # 6. Verify in Gramps
@@ -914,25 +916,25 @@ curl http://localhost:8000/api/gramps/audit-trail | python3 -m json.tool
 #!/bin/bash
 # Script to create complete family tree in proper order
 
-# Get cluster IDs
-CLUSTERS=$(curl -s http://localhost:8000/api/clusters | python3 -m json.tool)
+# Get person IDs
+PEOPLE=$(curl -s http://localhost:8000/api/people | python3 -m json.tool)
 
-# Extract specific cluster IDs
-TERRENCE_ID=$(echo "$CLUSTERS" | jq '.clusters[] | select(.canonical_name | contains("Terrence")) | .cluster_id')
-MAXINE_ID=$(echo "$CLUSTERS" | jq '.clusters[] | select(.canonical_name | contains("Maxine")) | .cluster_id')
-PATRICIA_ID=$(echo "$CLUSTERS" | jq '.clusters[] | select(.canonical_name | contains("Patricia")) | .cluster_id')
+# Extract specific person IDs
+TERRENCE_ID=$(echo "$PEOPLE" | jq '.people[] | select(.canonical_name | contains("Terrence")) | .person_id')
+MAXINE_ID=$(echo "$PEOPLE" | jq '.people[] | select(.canonical_name | contains("Maxine")) | .person_id')
+PATRICIA_ID=$(echo "$PEOPLE" | jq '.people[] | select(.canonical_name | contains("Patricia")) | .person_id')
 
 echo "Creating Generation 1: Grandparents..."
-curl -X POST "http://localhost:8000/api/clusters/$TERRENCE_ID/create-in-gramps?create_relationships=true" | \
+curl -X POST "http://localhost:8000/api/people/$TERRENCE_ID/create-in-gramps?create_relationships=true" | \
   python3 -m json.tool
 sleep 1
 
-curl -X POST "http://localhost:8000/api/clusters/$MAXINE_ID/create-in-gramps?create_relationships=true" | \
+curl -X POST "http://localhost:8000/api/people/$MAXINE_ID/create-in-gramps?create_relationships=true" | \
   python3 -m json.tool
 sleep 1
 
 echo "Creating Generation 2: Parents..."
-curl -X POST "http://localhost:8000/api/clusters/$PATRICIA_ID/create-in-gramps?create_relationships=true" | \
+curl -X POST "http://localhost:8000/api/people/$PATRICIA_ID/create-in-gramps?create_relationships=true" | \
   python3 -m json.tool
 
 echo "Complete! Check Gramps Web to see your family tree."
@@ -942,8 +944,8 @@ echo "Complete! Check Gramps Web to see your family tree."
 
 ### Debug Relationship Creation
 ```bash
-# 1. Check cluster has relationship facts
-curl -s http://localhost:8000/api/clusters/85 | python3 -m json.tool | \
+# 1. Check person has relationship facts
+curl -s http://localhost:8000/api/people/85 | python3 -m json.tool | \
   jq '.facts_by_type.relationship'
 
 # 2. Check related people exist in Gramps
@@ -985,23 +987,23 @@ curl http://localhost:8000/health | python3 -m json.tool
 
 ### Most Common Commands
 ```bash
-# Process -> Cluster -> Create workflow
+# Process -> Generate People -> Create workflow
 curl -X POST "http://localhost:8000/api/obituaries/process" \
   -H "Content-Type: application/json" \
   -d '{"obituary_text":"...","source_url":"..."}' | python3 -m json.tool
 
-curl -X POST http://localhost:8000/api/clusters/generate | python3 -m json.tool
+curl -X POST http://localhost:8000/api/people/generate | python3 -m json.tool
 
-curl http://localhost:8000/api/clusters/ready-for-creation | python3 -m json.tool
+curl http://localhost:8000/api/people/ready-for-sync | python3 -m json.tool
 
-curl -X POST "http://localhost:8000/api/clusters/{ID}/create-in-gramps?create_relationships=true" | \
+curl -X POST "http://localhost:8000/api/people/{ID}/create-in-gramps?create_relationships=true" | \
   python3 -m json.tool
 
 # View results
 curl http://localhost:8000/api/gramps/audit-trail | python3 -m json.tool
 
-curl -s http://localhost:8000/api/clusters | python3 -m json.tool | \
-  jq '.clusters[] | {cluster_id, canonical_name, source_count, gramps_person_id}'
+curl -s http://localhost:8000/api/people | python3 -m json.tool | \
+  jq '.people[] | {person_id, canonical_name, source_count, gramps_person_id}'
 
 # Debug
 podman logs genealogy-backend --tail=100 | grep "DEBUG:\|ERROR:"
@@ -1023,13 +1025,13 @@ curl http://localhost:8000/api/gramps/health | python3 -m json.tool
 
 ### Common Error Messages
 
-**"Cluster not found"**
-- Cluster ID doesn't exist
-- Check: `curl http://localhost:8000/api/clusters | jq '.clusters[] | .cluster_id'`
+**"Person not found"**
+- Person ID doesn't exist
+- Check: `curl http://localhost:8000/api/people | jq '.people[] | .person_id'`
 
 **"Person already linked to Gramps"**
 - Trying to create person that already has `gramps_person_id`
-- Unlink first: `curl -X DELETE http://localhost:8000/api/clusters/{id}/gramps-link`
+- Unlink first: `curl -X DELETE http://localhost:8000/api/people/{id}/gramps-link`
 
 **"Failed to add citation to person: 400 Bad Request"**
 - Known issue with Gramps API

@@ -147,10 +147,10 @@ async def root():
             "/health": "Health check",
             "/api/obituaries/process": "Process an obituary (POST)",
             "/api/obituaries/{id}/facts": "Get facts for an obituary (GET)",
-            "/api/clusters/generate": "Generate person clusters (POST)",
-            "/api/clusters": "List all clusters (GET)",
-            "/api/clusters/{id}": "Get cluster details (GET)",
-            "/api/clusters/{id}/corroboration": "Get corroboration info (GET)"
+            "/api/people/generate": "Generate identified people (POST)",
+            "/api/people": "List all identified people (GET)",
+            "/api/people/{id}": "Get person details (GET)",
+            "/api/people/{id}/corroboration": "Get corroboration info (GET)"
         }
     }
 
@@ -774,13 +774,13 @@ async def cross_obituary_analysis(db: Session = Depends(get_db)):
     }
 
 # ============================================================================
-# CLUSTERING ENDPOINTS (Phase 2)
+# PEOPLE ENDPOINTS (Phase 2)
 # ============================================================================
 
-@app.post("/api/clusters/generate")
-async def generate_clusters(db: Session = Depends(get_db)):
+@app.post("/api/people/generate")
+async def generate_people(db: Session = Depends(get_db)):
     """
-    Generate person clusters across all obituaries.
+    Generate identified people across all obituaries.
 
     This performs fuzzy matching to identify name variants and
     creates PersonCluster records linking facts about the same person.
@@ -794,34 +794,34 @@ async def generate_clusters(db: Session = Depends(get_db)):
     cluster_records = clusterer.create_person_cluster_records(clusters)
 
     return {
-        'clusters_created': len(cluster_records),
+        'people_created': len(cluster_records),
         'summary': {
-            'total_clusters': len(clusters),
-            'multi_source_clusters': sum(1 for c in clusters if c['obituary_count'] > 1),
-            'clusters_with_variants': sum(1 for c in clusters if len(c['name_variants']) > 1),
-            'total_facts_clustered': sum(c['fact_count'] for c in clusters)
+            'total_people': len(clusters),
+            'multi_source_people': sum(1 for c in clusters if c['obituary_count'] > 1),
+            'people_with_variants': sum(1 for c in clusters if len(c['name_variants']) > 1),
+            'total_facts_grouped': sum(c['fact_count'] for c in clusters)
         },
-        'clusters': [
+        'people': [
             {
-                'cluster_id': rec.id,
+                'person_id': rec.id,
                 'canonical_name': rec.canonical_name,
                 'name_variants': json.loads(rec.name_variants),
                 'source_count': rec.source_count,
                 'fact_count': rec.fact_count,
                 'confidence': float(rec.confidence_score) if rec.confidence_score else None
             }
-            for rec in cluster_records[:20]  # First 20 clusters
+            for rec in cluster_records[:20]  # First 20 people
         ]
     }
 
 
-@app.get("/api/clusters")
-async def list_clusters(
+@app.get("/api/people")
+async def list_people(
     min_sources: int = 1,
     db: Session = Depends(get_db)
 ):
     """
-    List all person clusters, optionally filtered by minimum source count.
+    List all identified people, optionally filtered by minimum source count.
     """
     query = db.query(PersonCluster)
 
@@ -834,16 +834,16 @@ async def list_clusters(
     ).all()
 
     return {
-        'cluster_count': len(clusters),
-        'clusters': [
+        'count': len(clusters),
+        'people': [
             {
-                'cluster_id': c.id,
+                'person_id': c.id,
                 'canonical_name': c.canonical_name,
                 'name_variants': json.loads(c.name_variants),
                 'source_count': c.source_count,
                 'fact_count': c.fact_count,
                 'confidence': float(c.confidence_score) if c.confidence_score else None,
-                'cluster_status': c.cluster_status,
+                'status': c.cluster_status,
                 'gramps_person_id': c.gramps_person_id
             }
             for c in clusters
@@ -851,14 +851,14 @@ async def list_clusters(
     }
 
 
-@app.get("/api/clusters/ready-for-creation")
-async def get_clusters_ready_for_creation(
+@app.get("/api/people/ready-for-sync")
+async def get_people_ready_for_sync(
     min_confidence: float = 0.80,
     min_sources: int = 2,
     db: Session = Depends(get_db)
 ):
     """
-    Get clusters that are good candidates for person creation.
+    Get people that are good candidates for syncing to Gramps.
 
     Filters:
     - Not already linked to Gramps
@@ -881,7 +881,7 @@ async def get_clusters_ready_for_creation(
     results = []
     for cluster in clusters:
         results.append({
-            'cluster_id': cluster.id,
+            'person_id': cluster.id,
             'canonical_name': cluster.canonical_name,
             'confidence': float(cluster.confidence_score) if cluster.confidence_score else None,
             'source_count': cluster.source_count,
@@ -890,49 +890,49 @@ async def get_clusters_ready_for_creation(
 
     return {
         'count': len(results),
-        'clusters': results
+        'people': results
     }
 
 
-@app.get("/api/clusters/{cluster_id}")
-async def get_cluster_details(
-    cluster_id: int,
+@app.get("/api/people/{person_id}")
+async def get_person_details(
+    person_id: int,
     db: Session = Depends(get_db)
 ):
     """
-    Get detailed information about a specific person cluster,
+    Get detailed information about a specific identified person,
     including all facts and sources.
     """
     clusterer = FactClusterer(db)
 
-    summary = clusterer.get_cluster_summary(cluster_id)
+    summary = clusterer.get_cluster_summary(person_id)
 
     if not summary:
-        raise HTTPException(status_code=404, detail="Cluster not found")
+        raise HTTPException(status_code=404, detail="Person not found")
 
     # Add conflict detection
-    conflicts = clusterer.detect_conflicts(cluster_id)
+    conflicts = clusterer.detect_conflicts(person_id)
     summary['conflicts'] = conflicts
 
     return summary
 
 
-@app.get("/api/clusters/{cluster_id}/corroboration")
-async def get_cluster_corroboration(
-    cluster_id: int,
+@app.get("/api/people/{person_id}/corroboration")
+async def get_person_corroboration(
+    person_id: int,
     db: Session = Depends(get_db)
 ):
     """
-    Show multi-source corroboration for a person cluster.
+    Show multi-source corroboration for an identified person.
 
     Displays facts that appear in multiple obituaries,
     which increases confidence.
     """
     clusterer = FactClusterer(db)
-    corroborated = clusterer.get_corroborated_facts(cluster_id)
+    corroborated = clusterer.get_corroborated_facts(person_id)
 
     return {
-        'cluster_id': cluster_id,
+        'person_id': person_id,
         'corroborated_facts': corroborated,
         'corroboration_summary': {
             'total_corroborated_facts': len(corroborated),
@@ -1010,22 +1010,22 @@ async def search_gramps_people(
     }
 
 
-@app.get("/api/clusters/{cluster_id}/gramps-matches")
+@app.get("/api/people/{person_id}/gramps-matches")
 async def find_gramps_matches(
-    cluster_id: int,
+    person_id: int,
     db: Session = Depends(get_db)
 ):
     """
-    Find potential Gramps Web matches for a person cluster.
+    Find potential Gramps Web matches for an identified person.
 
     READ-ONLY: Does not modify Gramps data.
     """
     matcher = GrampsMatcher(db)
 
-    matches = matcher.find_matches_for_cluster(cluster_id)
+    matches = matcher.find_matches_for_cluster(person_id)
 
     return {
-        'cluster_id': cluster_id,
+        'person_id': person_id,
         'matches_found': len(matches),
         'matches': [
             {
@@ -1048,23 +1048,23 @@ async def find_gramps_matches(
 # ============================================================================
 
 class LinkGrampsRequest(BaseModel):
-    """Request to link a cluster to a Gramps person"""
+    """Request to link a person to a Gramps person"""
     gramps_person_id: str
     gramps_handle: str
     confidence: str = 'high'
 
 
-@app.post("/api/clusters/{cluster_id}/link-gramps")
-async def link_cluster_to_gramps(
-    cluster_id: int,
+@app.post("/api/people/{person_id}/link-gramps")
+async def link_person_to_gramps(
+    person_id: int,
     request: LinkGrampsRequest,
     db: Session = Depends(get_db)
 ):
     """
-    Link a person cluster to a Gramps person and create citations.
+    Link an identified person to a Gramps person and create citations.
 
     This is the main write operation that:
-    1. Updates the cluster with gramps_person_id
+    1. Updates the person with gramps_person_id
     2. Creates source records in Gramps for each obituary
     3. Creates citation records linking persons to sources
     4. Records all writes in local gramps_citations table
@@ -1072,7 +1072,7 @@ async def link_cluster_to_gramps(
     citation_service = CitationService(db)
 
     result = citation_service.link_cluster_to_gramps(
-        cluster_id=cluster_id,
+        cluster_id=person_id,
         gramps_person_id=request.gramps_person_id,
         gramps_handle=request.gramps_handle,
         confidence=request.confidence
@@ -1084,39 +1084,39 @@ async def link_cluster_to_gramps(
     return result
 
 
-@app.get("/api/clusters/{cluster_id}/citations")
-async def get_cluster_citations(
-    cluster_id: int,
+@app.get("/api/people/{person_id}/citations")
+async def get_person_citations(
+    person_id: int,
     db: Session = Depends(get_db)
 ):
     """
-    Get all citations created for a person cluster.
+    Get all citations created for an identified person.
     """
     citation_service = CitationService(db)
 
-    citations = citation_service.get_cluster_citations(cluster_id)
+    citations = citation_service.get_cluster_citations(person_id)
 
     return {
-        'cluster_id': cluster_id,
+        'person_id': person_id,
         'citation_count': len(citations),
         'citations': citations
     }
 
 
-@app.delete("/api/clusters/{cluster_id}/gramps-link")
-async def unlink_cluster_from_gramps(
-    cluster_id: int,
+@app.delete("/api/people/{person_id}/gramps-link")
+async def unlink_person_from_gramps(
+    person_id: int,
     db: Session = Depends(get_db)
 ):
     """
-    Remove Gramps link from a cluster.
+    Remove Gramps link from an identified person.
 
     Note: This does NOT delete data from Gramps Web.
     It only removes the link in our local database.
     """
     citation_service = CitationService(db)
 
-    result = citation_service.unlink_cluster(cluster_id)
+    result = citation_service.unlink_cluster(person_id)
 
     if not result.get('success'):
         raise HTTPException(status_code=400, detail=result.get('error', 'Unknown error'))
@@ -1209,13 +1209,13 @@ async def debug_gramps_person(person_id: str):
 # PERSON CREATION ENDPOINTS (Phase 3 Stage 3)
 # ============================================================================
 
-@app.get("/api/clusters/{cluster_id}/creation-preview")
-async def preview_person_creation(
-    cluster_id: int,
+@app.get("/api/people/{person_id}/sync-preview")
+async def preview_person_sync(
+    person_id: int,
     db: Session = Depends(get_db)
 ):
     """
-    Preview what would be created in Gramps for this cluster.
+    Preview what would be created in Gramps for this person.
 
     Shows:
     - Person data (name, dates, etc.)
@@ -1227,7 +1227,7 @@ async def preview_person_creation(
     creator = PersonCreator(db)
 
     try:
-        preview = creator.preview_person_creation(cluster_id)
+        preview = creator.preview_person_creation(person_id)
         return preview
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -1235,24 +1235,24 @@ async def preview_person_creation(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/clusters/{cluster_id}/create-in-gramps")
+@app.post("/api/people/{person_id}/create-in-gramps")
 async def create_person_in_gramps(
-    cluster_id: int,
+    person_id: int,
     create_relationships: bool = True,
     db: Session = Depends(get_db)
 ):
     """
-    Create a new person in Gramps Web from this cluster.
+    Create a new person in Gramps Web from this identified person.
 
     PERFORMS WRITES TO GRAMPS WEB:
     - Creates new person record
     - Adds birth/death events
     - Creates family relationships (if requested)
     - Creates source citations
-    - Updates cluster.gramps_person_id
+    - Updates person record with gramps_person_id
 
     Args:
-        cluster_id: PersonCluster ID
+        person_id: Person ID (internal)
         create_relationships: Whether to create family links (default: true)
 
     Returns:
@@ -1262,7 +1262,7 @@ async def create_person_in_gramps(
 
     try:
         result = creator.create_person_from_cluster(
-            cluster_id=cluster_id,
+            cluster_id=person_id,
             create_relationships=create_relationships
         )
 
