@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getPeople } from '../api/client';
+import { getPeople, generatePeople } from '../api/client';
 import { ConfidenceBadge } from '../components/shared/ConfidenceBadge';
 import { PersonStatusBadge } from '../components/shared/PersonStatusBadge';
 
@@ -8,6 +8,7 @@ export function PeoplePage() {
   const navigate = useNavigate();
   const [people, setPeople] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState(null);
   const [minConfidence, setMinConfidence] = useState(0.70);
   const [minSources, setMinSources] = useState(1);
@@ -34,6 +35,20 @@ export function PeoplePage() {
       setError(err.message);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleGenerate = async () => {
+    setIsGenerating(true);
+    setError(null);
+
+    try {
+      await generatePeople();
+      await loadPeople();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIsGenerating(false);
     }
   };
 
@@ -87,7 +102,7 @@ export function PeoplePage() {
 
             <button
               onClick={loadPeople}
-              disabled={isLoading}
+              disabled={isLoading || isGenerating}
               className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
             >
               <svg
@@ -104,6 +119,45 @@ export function PeoplePage() {
                 />
               </svg>
               Refresh
+            </button>
+
+            <button
+              onClick={handleGenerate}
+              disabled={isLoading || isGenerating}
+              className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
+            >
+              <svg
+                className={`w-4 h-4 mr-2 ${isGenerating ? 'animate-spin' : ''}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                {isGenerating ? (
+                  <>
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                    />
+                    <path
+                      className="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                    />
+                  </>
+                ) : (
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
+                  />
+                )}
+              </svg>
+              {isGenerating ? 'Generating...' : 'Generate'}
             </button>
           </div>
         </div>

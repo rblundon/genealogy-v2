@@ -631,6 +631,81 @@ async def reprocess_obituary(
         raise HTTPException(status_code=500, detail=f"Reprocessing failed: {str(e)}")
 
 
+@app.post("/api/obituaries/reprocess-all")
+async def reprocess_all_obituaries(
+    db: Session = Depends(get_db)
+):
+    """
+    Reprocess all obituaries using their stored extracted text.
+    Deletes existing facts and re-runs the rules engine extraction for each obituary.
+
+    This is useful after updating extraction logic to re-extract all facts.
+    """
+    # Get all obituaries with extracted text
+    obituaries = db.query(ObituaryCache).filter(
+        ObituaryCache.extracted_text.isnot(None)
+    ).all()
+
+    if not obituaries:
+        return {
+            'status': 'success',
+            'message': 'No obituaries to reprocess',
+            'total': 0,
+            'processed': 0,
+            'failed': 0
+        }
+
+    processed = 0
+    failed = 0
+    results = []
+
+    for obituary in obituaries:
+        try:
+            # Delete existing facts
+            db.query(ExtractedFact).filter(
+                ExtractedFact.obituary_cache_id == obituary.id
+            ).delete()
+            db.commit()
+
+            # Run extraction synchronously (no verbose mode for batch)
+            result = await process_obituary_full(
+                db,
+                obituary.id,
+                obituary.extracted_text,
+                verbose_mode=False
+            )
+
+            obituary.processing_status = 'completed'
+            db.commit()
+
+            processed += 1
+            results.append({
+                'obituary_id': obituary.id,
+                'status': 'success',
+                'facts_extracted': result.get('facts_extracted', 0)
+            })
+
+        except Exception as e:
+            failed += 1
+            obituary.processing_status = 'failed'
+            obituary.fetch_error = str(e)
+            db.commit()
+            results.append({
+                'obituary_id': obituary.id,
+                'status': 'failed',
+                'error': str(e)
+            })
+
+    return {
+        'status': 'success',
+        'message': f'Reprocessed {processed} obituaries ({failed} failed)',
+        'total': len(obituaries),
+        'processed': processed,
+        'failed': failed,
+        'results': results
+    }
+
+
 @app.get("/api/obituaries/{obituary_id}/facts", response_model=ObituaryFactsResponse)
 async def get_obituary_facts(
     obituary_id: int,
@@ -785,7 +860,7 @@ async def generate_people(db: Session = Depends(get_db)):
     This performs fuzzy matching to identify name variants and
     creates PersonCluster records linking facts about the same person.
     """
-    clusterer = FactClusterer(db, fuzzy_threshold=0.85)
+    clusterer = FactClusterer(db)
 
     # Find cross-obituary clusters
     clusters = clusterer.find_cross_obituary_clusters()
@@ -915,6 +990,79 @@ async def get_person_details(
     summary['conflicts'] = conflicts
 
     return summary
+
+
+@app.delete("/api/people")
+async def delete_all_people(
+    db: Session = Depends(get_db)
+):
+    """Delete all person clusters (but keep extracted facts)."""
+    # Clear cluster assignments from facts
+    db.query(ExtractedFact).update({
+        ExtractedFact.person_cluster_id: None,
+        ExtractedFact.subject_cluster_id: None,
+        ExtractedFact.related_cluster_id: None,
+        ExtractedFact.resolution_status: 'unresolved'
+    })
+
+    # Delete all clusters
+    count = db.query(PersonCluster).delete()
+    db.commit()
+
+    return {'deleted': count, 'message': f'Deleted {count} person clusters'}
+
+
+@app.get("/api/people/{person_id}/debug")
+async def debug_person_facts(
+    person_id: int,
+    db: Session = Depends(get_db)
+):
+    """Debug endpoint to check raw facts for a person."""
+    cluster = db.query(PersonCluster).filter(PersonCluster.id == person_id).first()
+    if not cluster:
+        raise HTTPException(status_code=404, detail="Person not found")
+
+    # Get ALL facts where this person is subject
+    subject_facts = db.query(ExtractedFact).filter(
+        ExtractedFact.person_cluster_id == person_id
+    ).all()
+
+    # Get ALL facts where this person is related
+    related_facts = db.query(ExtractedFact).filter(
+        ExtractedFact.related_cluster_id == person_id
+    ).all()
+
+    return {
+        'cluster_id': cluster.id,
+        'canonical_name': cluster.canonical_name,
+        'name_variants': json.loads(cluster.name_variants),
+        'subject_facts_count': len(subject_facts),
+        'related_facts_count': len(related_facts),
+        'subject_facts': [
+            {
+                'id': f.id,
+                'fact_type': f.fact_type,
+                'fact_value': f.fact_value,
+                'subject_name': f.subject_name,
+                'related_name': f.related_name,
+                'person_cluster_id': f.person_cluster_id,
+                'related_cluster_id': f.related_cluster_id,
+            }
+            for f in subject_facts
+        ],
+        'related_facts': [
+            {
+                'id': f.id,
+                'fact_type': f.fact_type,
+                'fact_value': f.fact_value,
+                'subject_name': f.subject_name,
+                'related_name': f.related_name,
+                'person_cluster_id': f.person_cluster_id,
+                'related_cluster_id': f.related_cluster_id,
+            }
+            for f in related_facts
+        ],
+    }
 
 
 @app.get("/api/people/{person_id}/corroboration")

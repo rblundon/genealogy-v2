@@ -30,6 +30,38 @@ export function PersonDetailPage() {
     }
   };
 
+  // Consolidate identical facts from multiple sources into single entries
+  const consolidateFacts = (facts) => {
+    const consolidated = new Map();
+
+    facts.forEach(fact => {
+      // Create a key based on fact_type, fact_value, and related_name (for relationships)
+      // This ensures "parent -> Terrence" and "parent -> Maxine" are kept separate
+      const key = (fact.fact_type === 'relationship' || fact.fact_type === 'marriage')
+        ? `${fact.fact_type}|${fact.fact_value}|${fact.related_name || ''}`
+        : `${fact.fact_type}|${fact.fact_value}`;
+
+      if (consolidated.has(key)) {
+        const existing = consolidated.get(key);
+        // Add this source if not already present
+        if (fact.obituary_id && !existing.obituary_ids.includes(fact.obituary_id)) {
+          existing.obituary_ids.push(fact.obituary_id);
+        }
+        // Track if any instance is inferred
+        existing.is_inferred = existing.is_inferred || fact.is_inferred;
+        // Use highest confidence
+        existing.confidence = Math.max(existing.confidence || 0, fact.confidence || 0);
+      } else {
+        consolidated.set(key, {
+          ...fact,
+          obituary_ids: fact.obituary_id ? [fact.obituary_id] : []
+        });
+      }
+    });
+
+    return Array.from(consolidated.values());
+  };
+
   // Group facts into person facts and relationships
   const groupFacts = () => {
     if (!person || !person.facts_by_type) {
@@ -47,8 +79,7 @@ export function PersonDetailPage() {
       spouse: ['marriage', 'marriage_duration'],
       parent: [],
       child: [],
-      sibling: [],
-      extended: ['survived_by', 'preceded_in_death']
+      sibling: []
     };
 
     // Build person facts list
@@ -64,37 +95,45 @@ export function PersonDetailPage() {
       spouse: [],
       parent: [],
       child: [],
-      sibling: [],
-      extended: []
+      sibling: []
     };
 
     // Process relationship facts
     const relationshipFacts = person.facts_by_type['relationship'] || [];
     relationshipFacts.forEach(fact => {
-      const relType = (fact.related_name || '').toLowerCase();
+      const factValue = fact.fact_value?.toLowerCase() || '';
+
       // Categorize by relationship type keywords
-      if (['spouse', 'wife', 'husband'].some(t => fact.fact_value?.toLowerCase().includes(t))) {
+      // Use exact matches or word boundaries to avoid "grandchild" matching "child"
+      if (['spouse', 'wife', 'husband'].some(t => factValue.includes(t))) {
         relationships.spouse.push(fact);
-      } else if (['father', 'mother', 'parent'].some(t => fact.fact_value?.toLowerCase().includes(t))) {
+      } else if (['father', 'mother'].some(t => factValue.includes(t)) || factValue === 'parent') {
         relationships.parent.push(fact);
-      } else if (['son', 'daughter', 'child'].some(t => fact.fact_value?.toLowerCase().includes(t))) {
+      } else if (factValue === 'child' || factValue === 'son' || factValue === 'daughter') {
+        // Exact match only - excludes grandchild, great-grandchild, etc.
         relationships.child.push(fact);
-      } else if (['brother', 'sister', 'sibling'].some(t => fact.fact_value?.toLowerCase().includes(t))) {
+      } else if (['brother', 'sister'].some(t => factValue.includes(t)) || factValue === 'sibling') {
         relationships.sibling.push(fact);
-      } else {
-        relationships.extended.push(fact);
       }
+      // Other relationship types (grandchildren, in-laws, etc.) are excluded from the 4 direct relationships
     });
 
     // Also add marriage facts to spouse
     (person.facts_by_type['marriage'] || []).forEach(f => relationships.spouse.push({ ...f, fact_type: 'marriage' }));
     (person.facts_by_type['marriage_duration'] || []).forEach(f => relationships.spouse.push({ ...f, fact_type: 'marriage_duration' }));
 
-    // Add survived_by and preceded_in_death to extended
-    (person.facts_by_type['survived_by'] || []).forEach(f => relationships.extended.push({ ...f, fact_type: 'survived_by' }));
-    (person.facts_by_type['preceded_in_death'] || []).forEach(f => relationships.extended.push({ ...f, fact_type: 'preceded_in_death' }));
+    // Consolidate person facts
+    const consolidatedPersonFacts = consolidateFacts(personFacts);
 
-    return { personFacts, relationships };
+    // Consolidate relationships by category
+    // Add fact_type to each fact before consolidating (since facts_by_type doesn't include it)
+    const consolidatedRelationships = {};
+    for (const [category, facts] of Object.entries(relationships)) {
+      const factsWithType = facts.map(f => ({ ...f, fact_type: f.fact_type || 'relationship' }));
+      consolidatedRelationships[category] = consolidateFacts(factsWithType);
+    }
+
+    return { personFacts: consolidatedPersonFacts, relationships: consolidatedRelationships };
   };
 
   // Format fact type for display
@@ -254,13 +293,26 @@ export function PersonDetailPage() {
                   </div>
                   <ConfidenceBadge score={fact.confidence} />
                 </div>
-                {fact.obituary_id && (
-                  <Link
-                    to={`/obituaries/${fact.obituary_id}`}
-                    className="text-sm text-blue-600 hover:text-blue-800 mt-1 inline-block"
-                  >
-                    Source: Obituary #{fact.obituary_id}
-                  </Link>
+                {fact.obituary_ids && fact.obituary_ids.length > 0 && (
+                  <div className="text-sm text-gray-500 mt-1">
+                    <span className="mr-1">Sources:</span>
+                    {fact.obituary_ids.map((obitId, i) => (
+                      <span key={obitId}>
+                        {i > 0 && <span className="mx-1">·</span>}
+                        <Link
+                          to={`/obituaries/${obitId}`}
+                          className="text-blue-600 hover:text-blue-800"
+                        >
+                          Obituary #{obitId}
+                        </Link>
+                      </span>
+                    ))}
+                    {fact.obituary_ids.length > 1 && (
+                      <span className="ml-2 text-xs text-green-600 font-medium">
+                        ({fact.obituary_ids.length} sources)
+                      </span>
+                    )}
+                  </div>
                 )}
               </div>
             ))}
@@ -280,7 +332,7 @@ export function PersonDetailPage() {
               facts.length > 0 && (
                 <div key={relType}>
                   <h3 className="font-medium text-gray-700 capitalize mb-3 text-lg">
-                    {relType === 'extended' ? 'Other Relatives' : `${relType}s`}
+                    {relType === 'child' ? 'Children' : `${relType}s`}
                   </h3>
                   <div className="space-y-2">
                     {facts.map((fact, index) => (
@@ -301,13 +353,26 @@ export function PersonDetailPage() {
                           </div>
                           <ConfidenceBadge score={fact.confidence} />
                         </div>
-                        {fact.obituary_id && (
-                          <Link
-                            to={`/obituaries/${fact.obituary_id}`}
-                            className="text-sm text-blue-600 hover:text-blue-800 mt-1 inline-block"
-                          >
-                            Source: Obituary #{fact.obituary_id}
-                          </Link>
+                        {fact.obituary_ids && fact.obituary_ids.length > 0 && (
+                          <div className="text-sm text-gray-500 mt-1">
+                            <span className="mr-1">Sources:</span>
+                            {fact.obituary_ids.map((obitId, i) => (
+                              <span key={obitId}>
+                                {i > 0 && <span className="mx-1">·</span>}
+                                <Link
+                                  to={`/obituaries/${obitId}`}
+                                  className="text-blue-600 hover:text-blue-800"
+                                >
+                                  Obituary #{obitId}
+                                </Link>
+                              </span>
+                            ))}
+                            {fact.obituary_ids.length > 1 && (
+                              <span className="ml-2 text-xs text-green-600 font-medium">
+                                ({fact.obituary_ids.length} sources)
+                              </span>
+                            )}
+                          </div>
                         )}
                       </div>
                     ))}

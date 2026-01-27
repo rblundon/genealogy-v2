@@ -184,3 +184,37 @@ export async function getPeopleReadyForSync(minConfidence = 0.80, minSources = 2
 
   return response.json();
 }
+
+/**
+ * Generate/regenerate people clusters from extracted facts
+ * @returns {Promise<{status: string, clusters_created: number}>}
+ */
+export async function generatePeople() {
+  const response = await fetch(`${API_BASE_URL}/api/people/generate`, {
+    method: 'POST',
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to generate people');
+  }
+
+  return response.json();
+}
+
+/**
+ * Reprocess all obituaries using their stored extracted text
+ * @returns {Promise<{status: string, reprocessed_count: number}>}
+ */
+export async function reprocessAllObituaries() {
+  const response = await fetch(`${API_BASE_URL}/api/obituaries/reprocess-all`, {
+    method: 'POST',
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to reprocess obituaries');
+  }
+
+  return response.json();
+}
